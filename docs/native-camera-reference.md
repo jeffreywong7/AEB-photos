@@ -33,3 +33,7 @@ For single photos, Apple's [custom/locked exposure discussion](https://developer
 ## Photo-library review
 
 Use [PHPickerViewController](https://developer.apple.com/documentation/photosui/phpickerviewcontroller) for native library navigation and photo selection, restricted to images. Its [current representation mode](https://developer.apple.com/documentation/photosui/phpickerconfiguration-swift.struct/preferredassetrepresentationmode) avoids transcoding where possible. Retain the supplied representation for sharing and show its actual type. This provides the system library browser; it does not duplicate the full Photos editor.
+
+## Live level
+
+Read Core Motion's [latest device-motion sample](https://developer.apple.com/documentation/coremotion/cmmotionmanager/devicemotion) on the level's 30 Hz display schedule. Apple's [handler API guidance](https://developer.apple.com/documentation/coremotion/cmmotionmanager/startdevicemotionupdates(using:to:withhandler:)) advises against the main operation queue for frequent motion callbacks. Sampling without a handler keeps motion collection separate from SwiftUI updates. Stop motion collection and pause the display schedule when the overlay is disabled or the app is inactive. Hide samples older than half a second. Dynamic simulator input exercises both tilt directions, alignment, hiding when flat, and resume after camera controls or backgrounding; actual sensor behavior still needs the iPhone check.

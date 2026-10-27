@@ -4,14 +4,14 @@ The target is a photo-only camera as close as possible to the native iPhone 15 P
 
 ## Current evidence
 
-At `f082663`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, storage checks, and all fifteen UI interactions pass. These include relaunch recovery, empty-library cancellation, and selecting a library PNG while preserving its format and 1179×2556 dimensions. The photo, focal, wheel, AEB, timer, square/wide, lock, review, and native-library screens were inspected in simulator artifacts. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40489428032).
+At `ccbe462`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, capture-date metadata checks, storage checks, and all seventeen UI interactions pass. These include delayed restoration, empty/error recovery, unknown capture dates, relaunch recovery, and library PNG selection. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40498519084). A subsequent iPhone report identified a frozen horizon level. The level now samples current gravity on a 30 Hz display schedule; a new UI case drives changing tilt and lifecycle transitions, with screenshots of the rendered angles.
 
 | Area | Implemented | Verified | Still required |
 | --- | --- | --- | --- |
 | Photo layout | Centered toolbar, 4:3 frame, separate shutter/footer rows, circular controls, PHOTO pill, iOS 26+ Liquid Glass | Layout anchors checked; simulator photo, focal, wheel, AEB, timer, and review images inspected | Final comparison on the reference iPhone |
 | Zoom | Device-supported combined-camera stops, curved wheel, 24/28/35 mm main-camera crop cycling | Hold-to-open, preview dismissal, and focal cycling pass touch tests | Physical lens selection, zoom motion, and saved framing |
 | AEB and flash | Frame count, EV spacing, center exposure, supported-range checks; Auto/On/Off flash for single photos | AEB switch changes shutter mode in touch tests; flash code compiles | Capture complete brackets, verify exposure values, test flash output |
-| Composition | Grid and motion-driven horizon level with alignment feedback | Gravity math checked; level rendered in the simulator | Physical tilt direction and haptics |
+| Composition | Grid and live-sampled horizon level with alignment feedback and stale-sample rejection | Gravity math checked; changing-roll, alignment, flat-phone hiding, and resume checks added | Confirm moving level and haptics on the iPhone |
 | Exposure and focus | Tap-to-focus, exposure sun, exposure controls; touch-and-hold AE/AF lock waits for observed settled modes | Touch tests lock, adjust EV, capture, unlock, and clear the lock on backgrounding; locked-camera screenshot inspected | Physical focus, exposure lock, and AEB stability after recomposing |
 | Aspect | 4:3, 1:1, and 16:9 framing with matching JPEG center crops | Touch capture produces square/wide dimensions; ImageIO checks preserve orientation and ISO; uncropped data is unchanged | Real-camera framing comparison |
 | Timer | Off/3/5/10-second options and cancellation | Cancel/restart and background cancellation pass touch tests | Actual delayed capture on iPhone |

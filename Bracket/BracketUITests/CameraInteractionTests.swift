@@ -71,6 +71,46 @@ final class CameraInteractionTests: XCTestCase {
         XCTAssertFalse(exposure.exists)
     }
 
+    func testLevelTracksChangingRollAndResumesAfterControlsAndBackground() {
+        app.terminate()
+        app.launchArguments += ["--camera-ui-level-motion"]
+        app.launch()
+        let level = app.descendants(matching: .any)["camera.level"]
+        assertLevel(level, value: "-5.7 degrees", label: "Camera tilted")
+        captureLevelFrame("Level tilted left")
+        assertLevel(level, value: "0.0 degrees", label: "Camera level")
+        captureLevelFrame("Level aligned")
+        assertLevel(level, value: "5.7 degrees", label: "Camera tilted")
+        captureLevelFrame("Level tilted right")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: level)], timeout: 10), .completed)
+
+        app.buttons["camera.controls"].tap()
+        XCTAssertFalse(level.exists)
+        tapPreview()
+        assertLevel(level, value: "-5.7 degrees", label: "Camera tilted")
+        assertLevel(level, value: "0.0 degrees", label: "Camera level")
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        assertLevel(level, value: "-5.7 degrees", label: "Camera tilted")
+        assertLevel(level, value: "0.0 degrees", label: "Camera level")
+    }
+
+    private func assertLevel(_ level: XCUIElement, value: String, label: String) {
+        let matches = NSPredicate { _, _ in
+            guard level.exists else { return false }
+            return level.value as? String == value && level.label == label
+        }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: matches, object: level)], timeout: 15), .completed)
+    }
+
+    private func captureLevelFrame(_ name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testHoldLocksFocusAndExposureThroughAdjustmentAndCapture() {
         holdPreview()
         let lock = app.staticTexts["camera.focusLock"]

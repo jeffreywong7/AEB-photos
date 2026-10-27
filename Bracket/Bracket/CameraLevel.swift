@@ -1,33 +1,73 @@
 import SwiftUI
 import CoreMotion
+import OSLog
 
 private final class CameraLevelSensor: ObservableObject {
     private let motion = CMMotionManager()
     private let feedback = UISelectionFeedbackGenerator()
+    private let logger = Logger(subsystem: "com.example.Bracket", category: "CameraLevel")
     private var alignmentFeedbackSent = false
-    @Published private(set) var reading: CameraLevelReading?
+    private var previousReading: CameraLevelReading?
+    #if DEBUG
+    private var previewStartedAt: TimeInterval?
+    #endif
 
-    func start() {
-        guard motion.isDeviceMotionAvailable, !motion.isDeviceMotionActive else { return }
-        motion.deviceMotionUpdateInterval = 1.0 / 30
-        motion.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: .main) { [weak self] value, _ in
-            guard let self, let gravity = value?.gravity else { return }
-            let next = CameraLevelReading(gravityX: gravity.x, gravityY: gravity.y, gravityZ: gravity.z)
-            if let next {
-                if next.isLevel && !self.alignmentFeedbackSent {
-                    if self.reading != nil { self.feedback.selectionChanged() }
-                    self.alignmentFeedbackSent = true
-                } else if abs(next.angle) > .pi / 90 {
-                    self.alignmentFeedbackSent = false
-                }
-            } else { self.alignmentFeedbackSent = false }
-            self.reading = next
+    func start(preview: Bool) {
+        #if DEBUG
+        if preview {
+            if previewStartedAt == nil { previewStartedAt = ProcessInfo.processInfo.systemUptime }
+            return
         }
+        #endif
+        guard motion.isDeviceMotionAvailable,
+              CMMotionManager.availableAttitudeReferenceFrames().contains(.xArbitraryZVertical) else {
+            logger.error("Device motion is unavailable for the camera level")
+            return
+        }
+        motion.deviceMotionUpdateInterval = 1.0 / 30
+        motion.startDeviceMotionUpdates(using: .xArbitraryZVertical)
+        logger.debug("Camera level motion sampling started")
+    }
+
+    func reading(preview: Bool) -> CameraLevelReading? {
+        #if DEBUG
+        if preview {
+            guard let previewStartedAt else { return nil }
+            let uptime = ProcessInfo.processInfo.systemUptime
+            if ProcessInfo.processInfo.arguments.contains("--camera-ui-level-motion") {
+                switch Int((uptime - previewStartedAt) / 2) % 4 {
+                case 0: return CameraLevelReading(gravityX: 0.1, gravityY: -0.995, gravityZ: 0)
+                case 1: return CameraLevelReading(gravityX: 0, gravityY: -1, gravityZ: 0)
+                case 2: return CameraLevelReading(gravityX: -0.1, gravityY: -0.995, gravityZ: 0)
+                default: return CameraLevelReading(gravityX: 0, gravityY: 0, gravityZ: -1)
+                }
+            }
+            return CameraLevelReading(gravityX: 0.025, gravityY: -0.99, gravityZ: 0)
+        }
+        #endif
+        guard motion.isDeviceMotionActive, let sample = motion.deviceMotion else { return nil }
+        return CameraLevelReading(gravityX: sample.gravity.x, gravityY: sample.gravity.y, gravityZ: sample.gravity.z,
+                                  sampleAge: ProcessInfo.processInfo.systemUptime - sample.timestamp)
+    }
+
+    func updateFeedback(for reading: CameraLevelReading?) {
+        if let reading {
+            if reading.isLevel && !alignmentFeedbackSent {
+                if previousReading != nil { feedback.selectionChanged() }
+                alignmentFeedbackSent = true
+            } else if abs(reading.angle) > .pi / 90 {
+                alignmentFeedbackSent = false
+            }
+        } else { alignmentFeedbackSent = false }
+        previousReading = reading
     }
 
     func stop() {
         motion.stopDeviceMotionUpdates()
-        reading = nil
+        #if DEBUG
+        previewStartedAt = nil
+        #endif
+        previousReading = nil
         alignmentFeedbackSent = false
     }
 
@@ -40,28 +80,16 @@ struct CameraLevelOverlay: View {
     @StateObject private var sensor = CameraLevelSensor()
     @Environment(\.scenePhase) private var scenePhase
 
-    private var reading: CameraLevelReading? {
-        preview ? CameraLevelReading(gravityX: 0.025, gravityY: -0.99, gravityZ: 0) : sensor.reading
-    }
+    private var active: Bool { enabled && scenePhase == .active }
 
     var body: some View {
-        ZStack {
-            if enabled, let reading {
-                let color = reading.isLevel ? Color(uiColor: .systemYellow) : .white.opacity(0.85)
-                ZStack {
-                    HStack {
-                        Rectangle().frame(width: 22, height: 1)
-                        Spacer()
-                        Rectangle().frame(width: 22, height: 1)
-                    }
-                    Rectangle().frame(width: 128, height: 1)
-                        .rotationEffect(.radians(reading.angle))
-                }
-                .foregroundStyle(color)
-                .frame(width: 180, height: 48)
-                .accessibilityLabel(reading.isLevel ? "Camera level" : "Camera tilted")
-                .accessibilityValue(String(format: "%.1f degrees", abs(reading.angle) * 180 / .pi))
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active)) { context in
+            let reading = active ? sensor.reading(preview: preview) : nil
+            ZStack {
+                if let reading { indicator(reading) }
             }
+            .frame(width: 180, height: 48)
+            .onChange(of: context.date) { _ in sensor.updateFeedback(for: reading) }
         }
         .allowsHitTesting(false)
         .onAppear { updateSensor() }
@@ -71,7 +99,27 @@ struct CameraLevelOverlay: View {
     }
 
     private func updateSensor() {
-        if enabled && !preview && scenePhase == .active { sensor.start() }
+        if active { sensor.start(preview: preview) }
         else { sensor.stop() }
+    }
+
+    private func indicator(_ reading: CameraLevelReading) -> some View {
+        let color = reading.isLevel ? Color(uiColor: .systemYellow) : .white.opacity(0.85)
+        let degrees = reading.angle == 0 ? 0 : reading.angle * 180 / .pi
+        return ZStack {
+            HStack {
+                Rectangle().frame(width: 22, height: 1)
+                Spacer()
+                Rectangle().frame(width: 22, height: 1)
+            }
+            Rectangle().frame(width: 128, height: 1)
+                .rotationEffect(.radians(reading.angle))
+        }
+        .foregroundStyle(color)
+        .frame(width: 180, height: 48)
+        .accessibilityElement(children: .ignore)
+        .accessibilityIdentifier("camera.level")
+        .accessibilityLabel(reading.isLevel ? "Camera level" : "Camera tilted")
+        .accessibilityValue(String(format: "%.1f degrees", degrees))
     }
 }

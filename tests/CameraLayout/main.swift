@@ -32,6 +32,9 @@ precondition(left != nil && right != nil && left?.isLevel == false, "Small tilts
 precondition(abs(left!.angle + right!.angle) < 0.0001, "Opposite tilts must rotate the level in opposite directions")
 precondition(CameraLevelReading(gravityX: 0, gravityY: 0, gravityZ: -1) == nil, "Do not show an upright horizon when pointing down")
 precondition(CameraLevelReading(gravityX: 0.7, gravityY: -0.7, gravityZ: 0) == nil, "Hide the fine level for large camera rolls")
+precondition(CameraLevelReading(gravityX: 0.1, gravityY: -0.995, gravityZ: 0, sampleAge: 0.1) == left, "Display a current gravity sample")
+precondition(CameraLevelReading(gravityX: 0.1, gravityY: -0.995, gravityZ: 0, sampleAge: 1) == nil, "Do not leave a stale angle on screen")
+precondition(CameraLevelReading(gravityX: 0.1, gravityY: -0.995, gravityZ: 0, sampleAge: -1) == nil, "Reject a sample with an invalid timestamp")
 print("Camera level checks passed")
 
 let portrait = CGSize(width: 2400, height: 3200)
