@@ -11,6 +11,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     private var zoomScale: CGFloat = 1
     private var images: [Data] = []
     private var captureError: String?
+    private var capturedAspect: PhotoAspect = .standard
     private var shouldRun = false
     private let logger = Logger(subsystem: "com.example.Bracket", category: "Camera")
     private var runningObservation: NSKeyValueObservation?
@@ -33,6 +34,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     @Published var minBias: Float = -2
     @Published var maxBias: Float = 2
     @Published var aebEnabled = true
+    @Published var photoAspect: PhotoAspect = .standard
     @Published var flashMode: AVCaptureDevice.FlashMode = .off
     @Published private(set) var supportedFlashModes: [AVCaptureDevice.FlashMode] = [.off]
     @Published var count = 3
@@ -371,14 +373,33 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func capture() {
-        guard !isInterfacePreview else { return }
         guard canCapture else { return }
+        #if DEBUG
+        if isInterfacePreview {
+            let aspect = photoAspect
+            let frameCount = aebEnabled ? count : 1
+            busy = true
+            queue.async {
+                do {
+                    let photos = try CameraInterfacePreview.makeCapture(count: frameCount).compactMap { photo in
+                        CapturedPhoto(data: try PhotoCrop.jpeg(photo.data, aspect: aspect), createdAt: photo.createdAt)
+                    }
+                    DispatchQueue.main.async { self.recentPhotos = photos; self.busy = false }
+                } catch {
+                    DispatchQueue.main.async { self.message = error.localizedDescription; self.busy = false }
+                }
+            }
+            return
+        }
+        #endif
         busy = true
         lastCapture = nil
         let values = offsets
         let bracketed = aebEnabled
         let flash = flashMode
+        let aspect = photoAspect
         queue.async {
+            self.capturedAspect = aspect
             self.images = []
             self.captureError = nil
             if bracketed {
@@ -411,8 +432,14 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             DispatchQueue.main.async { self.busy = false; self.message = "Capture failed: \(error)" }
             return
         }
-        let photos = images
+        let sourcePhotos = images
         images.removeAll()
+        let photos: [Data]
+        do { photos = try sourcePhotos.map { try PhotoCrop.jpeg($0, aspect: capturedAspect) } }
+        catch {
+            DispatchQueue.main.async { self.busy = false; self.message = error.localizedDescription }
+            return
+        }
         guard !photos.isEmpty, photos.count == resolvedSettings.expectedPhotoCount else {
             DispatchQueue.main.async { self.busy = false; self.message = "The capture was incomplete. Please try again." }
             return

@@ -4,7 +4,7 @@ The target is a photo-only camera as close as possible to the native iPhone 15 P
 
 ## Current evidence
 
-The native Debug and Release builds, layout/level checks, and screenshot export pass at `92a57ec`. The nine-case UI suite has eight passing cases. The only failure searches for a separate dimensions text element, while the exported accessibility hierarchy and screenshot correctly show the combined label `Dimensions, 2400 × 3200`. The next commit corrects that query and reruns the suite. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40454390393).
+The native Debug and Release builds, layout/level checks, screenshot export, and all nine UI interaction cases pass at `727bec0`. The next verification run also covers aspect selection and JPEG crop behavior. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40455327032).
 
 | Area | Implemented | Verified | Still required |
 | --- | --- | --- | --- |
@@ -21,7 +21,6 @@ The native Debug and Release builds, layout/level checks, and screenshot export 
 ## Remaining implementation gaps
 
 - Long-press AE/AF lock and its interaction with AEB.
-- Aspect-ratio selection and corresponding saved-image crops.
 - Native photo-library browsing. Review currently contains only the latest capture from the current app session.
 
 ## Device validation
@@ -31,3 +30,7 @@ The local host has no Xcode or accessible iPhone. CI runs macOS/Xcode builds and
 On the iPhone, check cold launch before backgrounding, first camera permission approval, returning from Control Center, background/foreground transitions, switching cameras, photo review and return, valid and invalid AEB ranges, and Photos permission denial. Check flash with AEB off in bright and dark scenes. Check each available lens, wheel dragging, focal-length cycling, focus/exposure, level/haptics, and timer/volume-button capture. Compare saved images with the preview and confirm every requested exposure appears in Photos.
 
 The original reference photos remain local and are not included in the repository or CI artifacts.
+
+## Aspect-ratio follow-up
+
+The viewfinder now supports 4:3, 1:1, and 16:9 while retaining the measured toolbar/shutter/footer anchors. Each capture snapshots its selected aspect; JPEG processing applies the matching center crop to every exposure before saving. A 4:3 image that needs no crop retains its original bytes. Crop geometry accounts for EXIF rotation, and the encoder preserves orientation and exposure metadata. Pure geometry/ImageIO checks and a touch test checking square/wide output dimensions are included in the next CI run. Real-camera framing still needs the device comparison.

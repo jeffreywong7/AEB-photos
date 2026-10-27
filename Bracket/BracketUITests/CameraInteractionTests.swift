@@ -126,6 +126,24 @@ final class CameraInteractionTests: XCTestCase {
         XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 3))
     }
 
+    func testAspectChoiceChangesCapturedJPEGDimensions() {
+        for (aspect, dimensions) in [("1:1", "2400 × 2400"), ("16:9", "1800 × 3200")] {
+            app.buttons["camera.controls"].tap()
+            app.buttons["Aspect"].tap()
+            app.buttons["camera.aspect.\(aspect)"].tap()
+            tapPreview()
+            app.buttons["camera.shutter"].tap()
+            let review = app.buttons["Review last capture"]
+            XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: review)], timeout: 10), .completed)
+            review.tap()
+            XCTAssertTrue(app.buttons["Photo information"].waitForExistence(timeout: 5))
+            app.buttons["Photo information"].tap()
+            XCTAssertTrue(app.staticTexts["Dimensions, \(dimensions)"].waitForExistence(timeout: 3))
+            app.buttons["Done"].tap()
+            app.buttons["camera.review.close"].tap()
+        }
+    }
+
     private func assertExposure(_ slider: XCUIElement, positive: Bool) {
         let value = slider.value as? String ?? ""
         XCTAssertEqual(app.buttons["camera.exposure"].value as? String, value)

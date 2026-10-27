@@ -12,6 +12,7 @@ struct CameraView: View {
         case exposure = "Exposure"
         case timer = "Timer"
         case grid = "Grid"
+        case aspect = "Aspect"
     }
 
     @State private var selectedPanel: CameraPanel?
@@ -33,12 +34,15 @@ struct CameraView: View {
             let top = geometry.safeAreaInsets.top
             let bottom = geometry.safeAreaInsets.bottom
             let size = CGSize(width: geometry.size.width, height: geometry.size.height + top + bottom)
-            let layout = CameraLayout(size: size, safeTop: top, safeBottom: bottom)
+            let layout = CameraLayout(size: size, safeTop: top, safeBottom: bottom, aspect: camera.photoAspect)
             ZStack {
                 Color.black
                 viewfinder
                     .frame(width: layout.previewFrame.width, height: layout.previewFrame.height)
                     .position(x: layout.previewFrame.midX, y: layout.previewFrame.midY)
+                cameraToolsOverlay
+                    .frame(width: layout.controlsFrame.width, height: layout.controlsFrame.height)
+                    .position(x: layout.controlsFrame.midX, y: layout.controlsFrame.midY)
                 toolbar.position(layout.toolbarCenter)
                 ZStack {
                     shutterRow.position(layout.shutterCenter)
@@ -61,6 +65,8 @@ struct CameraView: View {
                 case "wheel": showingZoomWheel = true; camera.setZoom(0.7)
                 case "focal": mainLensMM = 35; camera.setZoom(CGFloat(35) / 24)
                 case "timer": selectedPanel = .timer; timerSeconds = 3
+                case "square": camera.photoAspect = .square
+                case "wide": camera.photoAspect = .wide
                 case "review":
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
@@ -166,7 +172,7 @@ struct CameraView: View {
                 Group {
                     #if DEBUG
                     if camera.isInterfacePreview {
-                        CameraPreviewScene().gesture(SpatialTapGesture().onEnded { value in
+                        CameraPreviewScene().aspectRatio(CGFloat(3) / 4, contentMode: .fill).gesture(SpatialTapGesture().onEnded { value in
                             let point = value.location
                             cameraTapped(at: point, devicePoint: CGPoint(x: point.x / geometry.size.width, y: point.y / geometry.size.height))
                         })
@@ -206,26 +212,27 @@ struct CameraView: View {
                         .shadow(radius: 8)
                         .accessibilityLabel("Taking photo in \(countdown) seconds")
                 }
-                VStack {
-                    if let status = camera.lastCapture {
-                        Text(status)
-                            .font(.system(size: 12, weight: .medium))
-                            .padding(.horizontal, 12).padding(.vertical, 8)
-                            .background(.black.opacity(0.6), in: Capsule())
-                            .padding(.top, 16)
-                            .accessibilityAddTraits(.updatesFrequently)
-                    }
-                    Spacer()
-                    if selectedPanel != nil {
-                        cameraControls.transition(.move(edge: .bottom).combined(with: .opacity))
-                    } else {
-                        zoomInterface
-                    }
-                }
             }
             .frame(width: geometry.size.width, height: geometry.size.height)
             .background(Color(white: 0.08))
             .clipped()
+        }
+    }
+
+    private var cameraToolsOverlay: some View {
+        VStack {
+            if let status = camera.lastCapture {
+                Text(status)
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(.black.opacity(0.6), in: Capsule())
+                    .padding(.top, 16)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+            Spacer()
+            if selectedPanel != nil {
+                cameraControls.transition(.move(edge: .bottom).combined(with: .opacity))
+            } else { zoomInterface }
         }
     }
 
@@ -409,6 +416,7 @@ struct CameraView: View {
             case .bracketing: aebControls
             case .exposure: exposureSettings
             case .timer: timerSettings
+            case .aspect: aspectSettings
             case .grid:
                 VStack(spacing: 16) {
                     Toggle("Grid", isOn: $camera.showGrid)
@@ -431,6 +439,22 @@ struct CameraView: View {
                 .accessibilityValue("\(ev(camera.center)) EV")
             Text(ev(camera.center)).monospacedDigit().frame(width: 42)
         }.padding(.horizontal, 20)
+    }
+
+    private var aspectSettings: some View {
+        HStack(spacing: 12) {
+            ForEach(PhotoAspect.allCases, id: \.self) { aspect in
+                Button { camera.photoAspect = aspect } label: {
+                    Text(aspect.rawValue)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(camera.photoAspect == aspect ? .black : .white)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(camera.photoAspect == aspect ? cameraYellow : .white.opacity(0.1), in: Capsule())
+                }
+                .accessibilityIdentifier("camera.aspect.\(aspect.rawValue)")
+                .accessibilityAddTraits(camera.photoAspect == aspect ? .isSelected : [])
+            }
+        }.padding(.horizontal, 12)
     }
 
     private var timerSettings: some View {

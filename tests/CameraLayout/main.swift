@@ -1,5 +1,7 @@
 import Foundation
 import CoreGraphics
+import ImageIO
+import UniformTypeIdentifiers
 
 func near(_ actual: CGFloat, _ expected: CGFloat, _ description: String) {
     precondition(abs(actual - expected) <= 0.5, "\(description): expected \(expected), got \(actual)")
@@ -31,3 +33,36 @@ precondition(abs(left!.angle + right!.angle) < 0.0001, "Opposite tilts must rota
 precondition(CameraLevelReading(gravityX: 0, gravityY: 0, gravityZ: -1) == nil, "Do not show an upright horizon when pointing down")
 precondition(CameraLevelReading(gravityX: 0.7, gravityY: -0.7, gravityZ: 0) == nil, "Hide the fine level for large camera rolls")
 print("Camera level checks passed")
+
+let portrait = CGSize(width: 2400, height: 3200)
+precondition(PhotoAspect.standard.cropRect(in: portrait, rotated: false) == CGRect(origin: .zero, size: portrait))
+precondition(PhotoAspect.square.cropRect(in: portrait, rotated: false) == CGRect(x: 0, y: 400, width: 2400, height: 2400))
+precondition(PhotoAspect.wide.cropRect(in: portrait, rotated: false) == CGRect(x: 300, y: 0, width: 1800, height: 3200))
+let landscape = CGSize(width: 3200, height: 2400)
+precondition(PhotoAspect.wide.cropRect(in: landscape, rotated: true) == CGRect(x: 0, y: 300, width: 3200, height: 1800))
+let wideLayout = CameraLayout(size: reference.size, safeTop: 59, safeBottom: 34, aspect: .wide)
+near(wideLayout.previewFrame.width / wideLayout.previewFrame.height, 9.0 / 16.0, "Wide preview aspect")
+precondition(wideLayout.shutterCenter == reference.shutterCenter, "Aspect selection must not move the shutter")
+print("Aspect framing checks passed")
+
+let context = CGContext(data: nil, width: 3200, height: 2400, bitsPerComponent: 8, bytesPerRow: 0,
+                        space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+context.setFillColor(CGColor(gray: 0.5, alpha: 1))
+context.fill(CGRect(x: 0, y: 0, width: 3200, height: 2400))
+let fixture = NSMutableData()
+let destination = CGImageDestinationCreateWithData(fixture, UTType.jpeg.identifier as CFString, 1, nil)!
+CGImageDestinationAddImage(destination, context.makeImage()!, [kCGImagePropertyOrientation: 6,
+    kCGImagePropertyExifDictionary: [kCGImagePropertyExifISOSpeedRatings: [100]]] as CFDictionary)
+precondition(CGImageDestinationFinalize(destination))
+let original = fixture as Data
+let unchanged = try PhotoCrop.jpeg(original, aspect: .standard)
+precondition(unchanged == original, "4:3 source JPEG bytes must remain unchanged")
+let cropped = try PhotoCrop.jpeg(original, aspect: .wide)
+let source = CGImageSourceCreateWithData(cropped as CFData, nil)!
+let metadata = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)! as! [CFString: Any]
+precondition(metadata[kCGImagePropertyPixelWidth] as? Int == 3200)
+precondition(metadata[kCGImagePropertyPixelHeight] as? Int == 1800)
+precondition(metadata[kCGImagePropertyOrientation] as? Int == 6, "Preserve the camera JPEG's EXIF rotation")
+let exif = metadata[kCGImagePropertyExifDictionary] as! [CFString: Any]
+precondition((exif[kCGImagePropertyExifISOSpeedRatings] as? [Int]) == [100], "Preserve exposure metadata when cropping")
+print("JPEG crop and orientation checks passed")

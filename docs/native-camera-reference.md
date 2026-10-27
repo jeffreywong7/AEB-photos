@@ -17,3 +17,7 @@ Apple's capture-controls session describes handling physical-button releases thr
 These are measurements from the supplied screenshots, not dimensions published by Apple. At 393×852 points, the 4:3 frame starts at y=118 and ends at y=642. The toolbar center is near y=82, the shutter near y=698, and the thumbnail/PHOTO/camera-switch row near y=794. The selected main-camera zoom stop is centered horizontally. `tests/CameraLayout/main.swift` checks these anchors and checks that compact iPhone layouts keep the controls separate from the captured frame.
 
 The original screenshots remain local reference material and are not included in this repository or uploaded to CI. Simulator snapshots use a neutral fixture scene and the actual SwiftUI camera screen. Those snapshots verify UI layout; they do not verify physical camera behavior or Apple's image-processing pipeline.
+
+## Aspect framing
+
+The Aspect tool follows Apple's documented 4:3, 1:1, and 16:9 choices. The default 4:3 measurements remain unchanged. Other choices center the capture viewport on the same point while keeping the toolbar, shutter, and footer stable. JPEG center crops account for EXIF orientation; the default uncropped image is passed through without re-encoding. ImageIO tests cover dimensions, orientation, and retained ISO metadata. The framing still needs comparison with the native app on the physical iPhone.

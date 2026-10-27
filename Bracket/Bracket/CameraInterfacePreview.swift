@@ -10,8 +10,11 @@ enum CameraInterfacePreview {
         guard let index = args.firstIndex(of: "--camera-ui-state"), args.indices.contains(index + 1) else { return "photo" }
         return args[index + 1]
     }
-    static var recentPhotos: [CapturedPhoto] {
-        [CGFloat(0.22), 0.45, 0.7].compactMap { brightness in
+    static var recentPhotos: [CapturedPhoto] { makeCapture(count: 3) }
+
+    static func makeCapture(count: Int) -> [CapturedPhoto] {
+        (0..<count).compactMap { index in
+            let brightness = CGFloat(min(0.9, 0.45 * pow(2, Double(index - count / 2) * 0.6)))
             let format = UIGraphicsImageRendererFormat()
             format.scale = 1
             let image = UIGraphicsImageRenderer(size: CGSize(width: 2400, height: 3200), format: format).image { context in
