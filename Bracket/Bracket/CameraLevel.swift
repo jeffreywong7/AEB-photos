@@ -18,9 +18,11 @@ private final class CameraLevelSensor: ObservableObject {
     @Published private(set) var reading: CameraLevelReading?
     #if DEBUG
     private var previewStartedAt: TimeInterval?
+    private var diagnosticFrames = 0
     #endif
 
     func start(preview: Bool) {
+        logger.notice("Level start requested preview=\(preview), displayLink=\(self.displayLink != nil)")
         guard displayLink == nil else { return }
         #if DEBUG
         if preview {
@@ -72,6 +74,14 @@ private final class CameraLevelSensor: ObservableObject {
 
     private func refresh(preview: Bool) {
         let next = currentReading(preview: preview)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--camera-ui-level-motion") {
+            if diagnosticFrames == 0 || next != reading {
+                logger.notice("Level frame=\(self.diagnosticFrames), angle=\(String(describing: next?.angle), privacy: .public)")
+            }
+            diagnosticFrames += 1
+        }
+        #endif
         if let next {
             if next.isLevel && !alignmentFeedbackSent {
                 if reading != nil { feedback.selectionChanged() }
@@ -84,11 +94,13 @@ private final class CameraLevelSensor: ObservableObject {
     }
 
     func stop() {
+        logger.notice("Level stopped")
         displayLink?.invalidate()
         displayLink = nil
         motion.stopDeviceMotionUpdates()
         #if DEBUG
         previewStartedAt = nil
+        diagnosticFrames = 0
         #endif
         reading = nil
         alignmentFeedbackSent = false
@@ -121,6 +133,7 @@ struct CameraLevelOverlay: View {
     }
 
     private func updateSensor() {
+        Logger(subsystem: "com.example.Bracket", category: "CameraLevel").notice("Level lifecycle enabled=\(enabled), scene=\(String(describing: scenePhase), privacy: .public), preview=\(preview)")
         if active { sensor.start(preview: preview) }
         else { sensor.stop() }
     }

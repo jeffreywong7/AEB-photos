@@ -33,4 +33,8 @@ if [[ -d "$PWD/.build/camera-ui-tests.xcresult" ]]; then
         --path "$PWD/.build/camera-ui-tests.xcresult" \
         --output-path "$PWD/.build/camera-ui-attachments"
 fi
+mkdir -p "$PWD/.build/camera-ui-attachments"
+xcrun simctl spawn "$device_id" log show --style compact --last 15m \
+    --predicate 'subsystem == "com.example.Bracket" AND category == "CameraLevel"' \
+    > "$PWD/.build/camera-ui-attachments/level-motion.log" || true
 exit "$test_status"
