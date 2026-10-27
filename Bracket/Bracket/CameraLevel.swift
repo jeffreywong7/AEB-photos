@@ -2,20 +2,30 @@ import SwiftUI
 import CoreMotion
 import OSLog
 
+private final class CameraLevelDisplayTarget: NSObject {
+    let onFrame: () -> Void
+
+    init(onFrame: @escaping () -> Void) { self.onFrame = onFrame }
+    @objc func frame(_ link: CADisplayLink) { onFrame() }
+}
+
 private final class CameraLevelSensor: ObservableObject {
     private let motion = CMMotionManager()
     private let feedback = UISelectionFeedbackGenerator()
     private let logger = Logger(subsystem: "com.example.Bracket", category: "CameraLevel")
     private var alignmentFeedbackSent = false
-    private var previousReading: CameraLevelReading?
+    private var displayLink: CADisplayLink?
+    @Published private(set) var reading: CameraLevelReading?
     #if DEBUG
     private var previewStartedAt: TimeInterval?
     #endif
 
     func start(preview: Bool) {
+        guard displayLink == nil else { return }
         #if DEBUG
         if preview {
             if previewStartedAt == nil { previewStartedAt = ProcessInfo.processInfo.systemUptime }
+            startDisplayLink(preview: true)
             return
         }
         #endif
@@ -26,10 +36,20 @@ private final class CameraLevelSensor: ObservableObject {
         }
         motion.deviceMotionUpdateInterval = 1.0 / 30
         motion.startDeviceMotionUpdates(using: .xArbitraryZVertical)
+        startDisplayLink(preview: false)
         logger.debug("Camera level motion sampling started")
     }
 
-    func reading(preview: Bool) -> CameraLevelReading? {
+    private func startDisplayLink(preview: Bool) {
+        let target = CameraLevelDisplayTarget { [weak self] in self?.refresh(preview: preview) }
+        let link = CADisplayLink(target: target, selector: #selector(CameraLevelDisplayTarget.frame(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 30, preferred: 30)
+        displayLink = link
+        link.add(to: .main, forMode: .common)
+        refresh(preview: preview)
+    }
+
+    private func currentReading(preview: Bool) -> CameraLevelReading? {
         #if DEBUG
         if preview {
             guard let previewStartedAt else { return nil }
@@ -50,28 +70,34 @@ private final class CameraLevelSensor: ObservableObject {
                                   sampleAge: ProcessInfo.processInfo.systemUptime - sample.timestamp)
     }
 
-    func updateFeedback(for reading: CameraLevelReading?) {
-        if let reading {
-            if reading.isLevel && !alignmentFeedbackSent {
-                if previousReading != nil { feedback.selectionChanged() }
+    private func refresh(preview: Bool) {
+        let next = currentReading(preview: preview)
+        if let next {
+            if next.isLevel && !alignmentFeedbackSent {
+                if reading != nil { feedback.selectionChanged() }
                 alignmentFeedbackSent = true
-            } else if abs(reading.angle) > .pi / 90 {
+            } else if abs(next.angle) > .pi / 90 {
                 alignmentFeedbackSent = false
             }
         } else { alignmentFeedbackSent = false }
-        previousReading = reading
+        if next != reading { reading = next }
     }
 
     func stop() {
+        displayLink?.invalidate()
+        displayLink = nil
         motion.stopDeviceMotionUpdates()
         #if DEBUG
         previewStartedAt = nil
         #endif
-        previousReading = nil
+        reading = nil
         alignmentFeedbackSent = false
     }
 
-    deinit { motion.stopDeviceMotionUpdates() }
+    deinit {
+        displayLink?.invalidate()
+        motion.stopDeviceMotionUpdates()
+    }
 }
 
 struct CameraLevelOverlay: View {
@@ -83,14 +109,10 @@ struct CameraLevelOverlay: View {
     private var active: Bool { enabled && scenePhase == .active }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !active)) { context in
-            let reading = active ? sensor.reading(preview: preview) : nil
-            ZStack {
-                if let reading { indicator(reading) }
-            }
-            .frame(width: 180, height: 48)
-            .onChange(of: context.date) { _ in sensor.updateFeedback(for: reading) }
+        ZStack {
+            if active, let reading = sensor.reading { indicator(reading) }
         }
+        .frame(width: 180, height: 48)
         .allowsHitTesting(false)
         .onAppear { updateSensor() }
         .onChange(of: enabled) { _ in updateSensor() }
