@@ -12,6 +12,14 @@ enum CameraInterfacePreview {
     }
     static var recentPhotos: [CapturedPhoto] { makeCapture(count: 3) }
 
+    static var recentCaptureURL: URL? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: "--camera-ui-store"), args.indices.contains(index + 1),
+              let id = UUID(uuidString: args[index + 1]) else { return nil }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("CameraUITests/\(id.uuidString)/Photos.plist")
+    }
+
     static func makeCapture(count: Int) -> [CapturedPhoto] {
         (0..<count).compactMap { index in
             let brightness = CGFloat(min(0.9, 0.45 * pow(2, Double(index - count / 2) * 0.6)))

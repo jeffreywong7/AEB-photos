@@ -17,6 +17,7 @@ for state in photo wheel focal aeb timer square wide locked review; do
     python3 scripts/wait-for-camera-snapshot.py "$container/Documents/camera-$state.png" "$output_dir/window-$state.png"
     xcrun simctl io "$device_id" screenshot "$output_dir/camera-$state.png"
 done
+xcrun simctl addmedia "$device_id" "$output_dir/window-photo.png"
 test_status=0
 xcodebuild \
     -project Bracket/Bracket.xcodeproj \

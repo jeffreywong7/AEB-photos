@@ -630,7 +630,7 @@ struct CameraView: View {
                 }
                 .frame(width: 48, height: 48).clipShape(Circle())
             }
-            .disabled(camera.recentPhotos.isEmpty || camera.busy || countdown != nil)
+            .disabled(camera.busy || countdown != nil)
             .accessibilityLabel("Review last capture")
             Spacer()
             Text("PHOTO")

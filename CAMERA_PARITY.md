@@ -4,7 +4,7 @@ The target is a photo-only camera as close as possible to the native iPhone 15 P
 
 ## Current evidence
 
-The native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, screenshot export, and all ten UI interaction cases pass at `99fb9cf`. Square and wide simulator screenshots were inspected. The next verification run adds focus-lock interactions and a locked-camera screenshot. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40481154948).
+The native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, screenshot export, and all twelve UI interaction cases pass at `d057840`. The photo, square, wide, and locked-camera simulator screenshots were inspected. The next run adds recent-capture persistence and system photo-library interactions. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40483180219).
 
 | Area | Implemented | Verified | Still required |
 | --- | --- | --- | --- |
@@ -12,16 +12,17 @@ The native Debug and Release builds, layout/level checks, ImageIO crop/orientati
 | Zoom | Device-supported combined-camera stops, curved wheel, 24/28/35 mm main-camera crop cycling | Hold-to-open, preview dismissal, and focal cycling pass touch tests | Physical lens selection, zoom motion, and saved framing |
 | AEB and flash | Frame count, EV spacing, center exposure, supported-range checks; Auto/On/Off flash for single photos | AEB switch changes shutter mode in touch tests; flash code compiles | Capture complete brackets, verify exposure values, test flash output |
 | Composition | Grid and motion-driven horizon level with alignment feedback | Gravity math checked; level rendered in the simulator | Physical tilt direction and haptics |
-| Exposure and focus | Tap-to-focus, exposure sun, exposure controls; touch-and-hold AE/AF lock waits for observed settled modes | Slider direction and toolbar value agree in touch tests; focus-lock checks pending | Physical focus, exposure lock, and AEB stability after recomposing |
+| Exposure and focus | Tap-to-focus, exposure sun, exposure controls; touch-and-hold AE/AF lock waits for observed settled modes | Touch tests lock, adjust EV, capture, unlock, and clear the lock on backgrounding; locked-camera screenshot inspected | Physical focus, exposure lock, and AEB stability after recomposing |
 | Aspect | 4:3, 1:1, and 16:9 framing with matching JPEG center crops | Touch capture produces square/wide dimensions; ImageIO checks preserve orientation and ISO; uncropped data is unchanged | Real-camera framing comparison |
 | Timer | Off/3/5/10-second options and cancellation | Cancel/restart and background cancellation pass touch tests | Actual delayed capture on iPhone |
 | Hardware shutter | Supported iOS 18+ capture-event API routed through the shutter action | Native compilation | Volume-button delivery and timer cancellation on iPhone |
-| Photo review | Paging, thumbnail strip, pinch/double-tap zoom, drag-down dismissal, original-JPEG sharing and information | Double-tap zoom, back navigation, drag dismissal, and original-dimension checks pass | Verify original sharing on iPhone |
+| Photo review | Paging, thumbnails, pinch/double-tap zoom, drag dismissal, sharing/information; retain the latest bracket across launches; open the system photo library | Zoom, navigation, dismissal, and dimensions pass; persistence and picker tests pending | Verify sharing and iCloud loading on iPhone |
 | Startup and permissions | Start on appearance, observe actual session state, preserve temporary inactivity, Settings/retry actions | Native compilation; UI fixture launches successfully | Cold launch, permission approval/denial, interruption, and real-session resume |
 
-## Remaining implementation gaps
+## Remaining differences
 
-- Native photo-library browsing. Review currently contains only the latest capture from the current app session.
+- Photo-library browsing uses Apple's system picker. The app does not recreate the full Photos editor, favorites, or deletion flows.
+- The native camera's private image processing and view-outside-frame composition are not reproduced.
 
 ## Device validation
 
@@ -38,3 +39,7 @@ The viewfinder supports 4:3, 1:1, and 16:9 while retaining the measured toolbar/
 ## Focus-lock follow-up
 
 Touch and hold meters the selected point once, then displays AE/AF LOCK after observing locked focus/exposure modes and completed adjustments. A five-second failure releases metering and reports the problem. Tapping the preview refocuses; stopping the camera or switching cameras restores automatic metering. Single photos use speed prioritization while locked so image fusion does not override the locked exposure. AEB continues to use EV-bias bracket settings on the combined camera; this preserves access to its physical lenses. Confirm the locked reference and each bracket's actual exposure on an iPhone before treating this as verified capture behavior.
+
+## Photo-review follow-up
+
+The latest saved bracket is retained in one atomically replaced binary property list in Application Support, excluded from backup. Loading and writing run off the main thread; a failed local copy does not undo a successful Photos save. The thumbnail and full-resolution review can return after relaunch. The system photo picker provides photo-only library browsing, including an empty-capture flow. The selected representation is reviewed and shared without re-encoding, with its actual file type and orientation-aware dimensions. The next CI run exercises relaunch, library PNG selection, and picker cancellation and checks stored bytes/timestamps independently.

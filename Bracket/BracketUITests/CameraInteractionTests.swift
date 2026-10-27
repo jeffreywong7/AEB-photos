@@ -175,6 +175,56 @@ final class CameraInteractionTests: XCTestCase {
         }
     }
 
+    func testLastBracketSurvivesAppRelaunch() {
+        app.terminate()
+        app.launchArguments += ["--camera-ui-store", UUID().uuidString]
+        app.launch()
+        XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 5))
+        app.buttons["camera.controls"].tap()
+        app.buttons["Aspect"].tap()
+        app.buttons["camera.aspect.1:1"].tap()
+        tapPreview()
+        app.buttons["camera.shutter"].tap()
+        let review = app.buttons["Review last capture"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: review)], timeout: 10), .completed)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        review.tap()
+        XCTAssertTrue(app.buttons["Photo information"].waitForExistence(timeout: 5))
+        app.buttons["Photo information"].tap()
+        XCTAssertTrue(app.staticTexts["Dimensions, 2400 × 2400"].waitForExistence(timeout: 3))
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["View photo 3 of 3"].exists)
+    }
+
+    func testPhotoLibraryOpensPNGWithoutJPEGConversion() {
+        app.buttons["Review last capture"].tap()
+        XCTAssertTrue(app.buttons["Browse photo library"].waitForExistence(timeout: 5))
+        app.buttons["Browse photo library"].tap()
+        let cancel = app.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        let photo = app.cells.firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout: 10))
+        photo.tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: cancel)], timeout: 10), .completed)
+        app.buttons["Photo information"].tap()
+        XCTAssertTrue(app.staticTexts["Format, PNG"].waitForExistence(timeout: 5))
+    }
+
+    func testEmptyCaptureReviewCanCancelLibraryAndReturnToCamera() {
+        app.terminate()
+        app.launchArguments += ["--camera-ui-state", "empty"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Review last capture"].waitForExistence(timeout: 5))
+        app.buttons["Review last capture"].tap()
+        let cancel = app.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        cancel.tap()
+        XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["camera.shutter"].isEnabled)
+    }
+
     private func assertExposure(_ slider: XCUIElement, positive: Bool) {
         let value = slider.value as? String ?? ""
         XCTAssertEqual(app.buttons["camera.exposure"].value as? String, value)

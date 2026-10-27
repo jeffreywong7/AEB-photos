@@ -19,6 +19,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     private var runtimeErrorObserver: NSObjectProtocol?
     private var focusObservations: [NSKeyValueObservation] = []
     private var pendingFocusLock: UUID?
+    private var recentCaptureStore = RecentCaptureStore()
 
     enum FocusState: Equatable {
         case automatic
@@ -90,7 +91,11 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             zoomPresets = [0.5, 1, 2, 3]
             supportedFlashModes = [.off, .auto, .on]
             showGrid = true
-            recentPhotos = CameraInterfacePreview.recentPhotos
+            if let fileURL = CameraInterfacePreview.recentCaptureURL {
+                recentCaptureStore = RecentCaptureStore(fileURL: fileURL)
+                recentPhotos = ((try? recentCaptureStore.load()) ?? []).compactMap { CapturedPhoto(data: $0.data, createdAt: $0.createdAt) }
+            }
+            if recentPhotos.isEmpty, CameraInterfacePreview.state != "empty" { recentPhotos = CameraInterfacePreview.recentPhotos }
             return
         }
         #endif
@@ -106,6 +111,12 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             let detail = (notification.userInfo?[AVCaptureSessionErrorKey] as? Error)?.localizedDescription
                 ?? "The camera session stopped unexpectedly. Try again."
             DispatchQueue.main.async { self?.unavailability = .failure(detail) }
+        }
+        queue.async {
+            do {
+                let photos = try self.recentCaptureStore.load().compactMap { CapturedPhoto(data: $0.data, createdAt: $0.createdAt) }
+                DispatchQueue.main.async { self.recentPhotos = photos }
+            } catch { self.logger.error("Could not restore the last capture: \(error.localizedDescription)") }
         }
     }
 
@@ -484,6 +495,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                     let photos = try CameraInterfacePreview.makeCapture(count: frameCount).compactMap { photo in
                         CapturedPhoto(data: try PhotoCrop.jpeg(photo.data, aspect: aspect), createdAt: photo.createdAt)
                     }
+                    if CameraInterfacePreview.recentCaptureURL != nil { self.storeRecentCapture(photos) }
                     DispatchQueue.main.async { self.recentPhotos = photos; self.busy = false }
                 } catch {
                     DispatchQueue.main.async { self.message = error.localizedDescription; self.busy = false }
@@ -559,16 +571,29 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                     request.addResource(with: .photo, data: data, options: nil)
                 }
             } completionHandler: { success, error in
-                DispatchQueue.main.async {
-                    self.busy = false
-                    self.setExposure(self.center)
-                    if success {
-                        self.recentPhotos = capturedPhotos
-                        self.lastCapture = photos.count == 1 ? "Saved photo" : "Saved \(photos.count) exposures"
+                if success {
+                    self.queue.async {
+                        self.storeRecentCapture(capturedPhotos)
+                        DispatchQueue.main.async {
+                            self.busy = false
+                            self.setExposure(self.center)
+                            self.recentPhotos = capturedPhotos
+                            self.lastCapture = photos.count == 1 ? "Saved photo" : "Saved \(photos.count) exposures"
+                        }
                     }
-                    else { self.message = "Could not save photos: \(error?.localizedDescription ?? "Unknown error")" }
+                } else {
+                    DispatchQueue.main.async {
+                        self.busy = false
+                        self.setExposure(self.center)
+                        self.message = "Could not save photos: \(error?.localizedDescription ?? "Unknown error")"
+                    }
                 }
             }
         }
+    }
+
+    private func storeRecentCapture(_ photos: [CapturedPhoto]) {
+        do { try recentCaptureStore.save(photos.map { StoredCapturePhoto(data: $0.data, createdAt: $0.createdAt) }) }
+        catch { logger.error("Could not retain the last capture for review: \(error.localizedDescription)") }
     }
 }

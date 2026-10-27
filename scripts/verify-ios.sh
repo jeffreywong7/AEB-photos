@@ -7,7 +7,7 @@ if ! command -v xcodebuild >/dev/null 2>&1; then
 fi
 build_dir="${BRACKET_BUILD_DIR:-$PWD/.build/ios}"
 mkdir -p "$build_dir"
-xcrun swiftc Bracket/Bracket/CameraLayout.swift Bracket/Bracket/CameraLevelReading.swift Bracket/Bracket/PhotoAspect.swift Bracket/Bracket/PhotoCrop.swift tests/CameraLayout/main.swift -o "$build_dir/check-camera-layout"
+xcrun swiftc Bracket/Bracket/CameraLayout.swift Bracket/Bracket/CameraLevelReading.swift Bracket/Bracket/PhotoAspect.swift Bracket/Bracket/PhotoCrop.swift Bracket/Bracket/RecentCaptureStore.swift tests/CameraLayout/main.swift -o "$build_dir/check-camera-layout"
 "$build_dir/check-camera-layout"
 for configuration in Debug Release; do
 xcodebuild \

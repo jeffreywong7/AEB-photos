@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct PhotoReviewView: View {
-    let photos: [CapturedPhoto]
+    let capturedPhotos: [CapturedPhoto]
     @Environment(\.dismiss) private var dismiss
     @State private var selection = 0
     @State private var chromeVisible = true
@@ -10,20 +10,27 @@ struct PhotoReviewView: View {
     @State private var dragOffset: CGFloat = 0
     @State private var sheet: ReviewSheet?
     @State private var shareError: String?
+    @State private var libraryError: String?
+    @State private var libraryPhoto: CapturedPhoto?
+    @State private var libraryLoading = false
+
+    private var photos: [CapturedPhoto] { libraryPhoto.map { [$0] } ?? capturedPhotos }
 
     init(photos: [CapturedPhoto]) {
-        self.photos = photos
+        self.capturedPhotos = photos
         _selection = State(initialValue: photos.count / 2)
     }
 
     private enum ReviewSheet: Identifiable {
         case share(URL)
         case info(CapturedPhoto)
+        case library
 
         var id: String {
             switch self {
             case .share(let url): return url.absoluteString
             case .info(let photo): return photo.id.uuidString
+            case .library: return "library"
             }
         }
     }
@@ -31,29 +38,31 @@ struct PhotoReviewView: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            TabView(selection: $selection) {
-                ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
-                    ZoomablePhotoView(photo: photo, selected: selection == index,
-                                      onTap: { withAnimation(.easeInOut(duration: 0.18)) { chromeVisible.toggle() } },
-                                      onZoom: { if selection == index { zoomed = $0 } })
-                        .tag(index)
-                        .accessibilityIdentifier("camera.review.image.\(index)")
-                        .accessibilityLabel("Photo \(index + 1) of \(photos.count)")
-                        .accessibilityValue(selection == index && zoomed ? "Zoomed" : "Fit")
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .offset(y: dragOffset)
-            .simultaneousGesture(DragGesture(minimumDistance: 25)
-                .onChanged { value in
-                    if !zoomed, value.translation.height > 0, abs(value.translation.height) > abs(value.translation.width) {
-                        dragOffset = value.translation.height
+            if !photos.isEmpty {
+                TabView(selection: $selection) {
+                    ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
+                        ZoomablePhotoView(photo: photo, selected: selection == index,
+                                          onTap: { withAnimation(.easeInOut(duration: 0.18)) { chromeVisible.toggle() } },
+                                          onZoom: { if selection == index { zoomed = $0 } })
+                            .tag(index)
+                            .accessibilityIdentifier("camera.review.image.\(index)")
+                            .accessibilityLabel("Photo \(index + 1) of \(photos.count)")
+                            .accessibilityValue(selection == index && zoomed ? "Zoomed" : "Fit")
                     }
                 }
-                .onEnded { _ in
-                    if dragOffset > 120 { dismiss() }
-                    else { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragOffset = 0 } }
-                })
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .offset(y: dragOffset)
+                .simultaneousGesture(DragGesture(minimumDistance: 25)
+                    .onChanged { value in
+                        if !zoomed, value.translation.height > 0, abs(value.translation.height) > abs(value.translation.width) {
+                            dragOffset = value.translation.height
+                        }
+                    }
+                    .onEnded { _ in
+                        if dragOffset > 120 { dismiss() }
+                        else { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { dragOffset = 0 } }
+                    })
+            }
             if chromeVisible {
                 VStack {
                     topBar
@@ -62,11 +71,16 @@ struct PhotoReviewView: View {
                 }
                 .transition(.opacity)
             }
+            if libraryLoading {
+                ProgressView("Opening photo…")
+                    .padding(24).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            }
         }
         .preferredColorScheme(.dark)
         .statusBarHidden()
         .persistentSystemOverlays(.hidden)
         .onChange(of: selection) { _ in zoomed = false; dragOffset = 0 }
+        .onAppear { if photos.isEmpty { sheet = .library } }
         .sheet(item: $sheet) { item in
             switch item {
             case .share(let url): CaptureShareView(fileURL: url)
@@ -75,18 +89,32 @@ struct PhotoReviewView: View {
                     Form {
                         LabeledContent("Captured") { Text(photo.createdAt, style: .date) }
                         LabeledContent("Dimensions", value: photo.pixelDimensions)
-                        LabeledContent("Format", value: "JPEG")
+                        LabeledContent("Format", value: photo.formatName)
                         LabeledContent("File size", value: ByteCountFormatter.string(fromByteCount: Int64(photo.data.count), countStyle: .file))
                     }
                     .navigationTitle("Photo Info")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { sheet = nil } } }
                 }.presentationDetents([.medium])
+            case .library:
+                PhotoLibraryPicker(onLoading: { sheet = nil; libraryLoading = true }, onSelection: { result in
+                    sheet = nil
+                    libraryLoading = false
+                    switch result {
+                    case .success(let photo):
+                        if let photo { libraryPhoto = photo; selection = 0; zoomed = false; dragOffset = 0 }
+                        else if photos.isEmpty { dismiss() }
+                    case .failure(let error): libraryError = error.localizedDescription
+                    }
+                }).ignoresSafeArea()
             }
         }
         .alert("Could not share photo", isPresented: Binding(get: { shareError != nil }, set: { if !$0 { shareError = nil } })) {
             Button("OK", role: .cancel) { shareError = nil }
         } message: { Text(shareError ?? "") }
+        .alert("Could not open photo", isPresented: Binding(get: { libraryError != nil }, set: { if !$0 { libraryError = nil } })) {
+            Button("OK", role: .cancel) { libraryError = nil }
+        } message: { Text(libraryError ?? "") }
         .cameraSnapshotPreview(review: true)
     }
 
@@ -106,7 +134,12 @@ struct PhotoReviewView: View {
                 }
             }
             Spacer()
-            Color.clear.frame(width: 44, height: 44)
+            Button { sheet = .library } label: {
+                Image(systemName: "photo.on.rectangle.angled").font(.system(size: 20))
+                    .frame(width: 44, height: 44)
+            }
+            .disabled(libraryLoading)
+            .accessibilityLabel("Browse photo library")
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 12).padding(.bottom, 10)
@@ -122,6 +155,7 @@ struct PhotoReviewView: View {
             } label: {
                 Image(systemName: "square.and.arrow.up").font(.system(size: 20)).frame(width: 44, height: 44)
             }.accessibilityLabel("Share original photo")
+                .disabled(photos.isEmpty || libraryLoading)
             Spacer(minLength: 0)
             HStack(spacing: 4) {
                 ForEach(Array(photos.enumerated()), id: \.element.id) { index, photo in
@@ -139,6 +173,7 @@ struct PhotoReviewView: View {
             } label: {
                 Image(systemName: "info.circle").font(.system(size: 20)).frame(width: 44, height: 44)
             }.accessibilityLabel("Photo information")
+                .disabled(photos.isEmpty || libraryLoading)
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 16).padding(.top, 14)

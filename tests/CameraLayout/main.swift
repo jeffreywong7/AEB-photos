@@ -66,3 +66,19 @@ precondition(metadata[kCGImagePropertyOrientation] as? Int == 6, "Preserve the c
 let exif = metadata[kCGImagePropertyExifDictionary] as! [CFString: Any]
 precondition((exif[kCGImagePropertyExifISOSpeedRatings] as? [Int]) == [100], "Preserve exposure metadata when cropping")
 print("JPEG crop and orientation checks passed")
+
+let captureFolder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+defer { try? FileManager.default.removeItem(at: captureFolder) }
+let captureURL = captureFolder.appendingPathComponent("Photos.plist")
+let store = RecentCaptureStore(fileURL: captureURL)
+let missing = try store.load()
+precondition(missing.isEmpty, "A first launch must not require an existing capture")
+let saved = [StoredCapturePhoto(data: original, createdAt: Date(timeIntervalSince1970: 1_793_052_060)),
+             StoredCapturePhoto(data: cropped, createdAt: Date(timeIntervalSince1970: 1_793_052_061))]
+try store.save(saved)
+let restored = try RecentCaptureStore(fileURL: captureURL).load()
+precondition(restored == saved, "A new store instance must restore every original byte and timestamp")
+try store.save([saved[1]])
+let replaced = try store.load()
+precondition(replaced == [saved[1]], "A new capture replaces the previous bracket")
+print("Recent capture persistence checks passed")
