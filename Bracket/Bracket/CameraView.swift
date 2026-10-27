@@ -424,6 +424,7 @@ struct CameraView: View {
             Image(systemName: "plusminus.circle").font(.system(size: 20))
             Slider(value: $camera.center, in: -2...2, step: 0.5).tint(cameraYellow)
                 .accessibilityLabel("Center exposure")
+                .accessibilityValue("\(ev(camera.center)) EV")
             Text(ev(camera.center)).monospacedDigit().frame(width: 42)
         }.padding(.horizontal, 20)
     }
@@ -447,7 +448,12 @@ struct CameraView: View {
     private var aebControls: some View {
         VStack(spacing: 16) {
             HStack {
-                Toggle("AEB", isOn: $camera.aebEnabled).tint(cameraYellow)
+                Text("AEB")
+                Spacer()
+                Toggle("AEB", isOn: $camera.aebEnabled)
+                    .labelsHidden()
+                    .tint(cameraYellow)
+                    .accessibilityIdentifier("camera.aebToggle")
                 Spacer().frame(width: 20)
                 Button { camera.showGrid.toggle() } label: {
                     Image(systemName: "grid")

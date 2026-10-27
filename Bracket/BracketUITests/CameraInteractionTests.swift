@@ -14,7 +14,17 @@ final class CameraInteractionTests: XCTestCase {
         header.press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.01)))
     }
 
-    override func tearDownWithError() throws { app.terminate() }
+    override func tearDownWithError() throws {
+        if let testRun, testRun.failureCount > 0 {
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+        }
+        app.terminate()
+    }
 
     func testMainCameraCyclesFocalLengths() {
         let main = app.buttons["camera.zoom.1"]
@@ -37,11 +47,13 @@ final class CameraInteractionTests: XCTestCase {
 
     func testAEBToggleChangesShutterCaptureMode() {
         app.buttons["camera.controls"].tap()
-        let toggle = app.switches["AEB"]
+        let toggle = app.switches["camera.aebToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 3))
         toggle.tap()
+        XCTAssertEqual(toggle.value as? String, "0")
         XCTAssertEqual(app.buttons["camera.shutter"].value as? String, "Single photo")
         toggle.tap()
+        XCTAssertEqual(toggle.value as? String, "1")
         XCTAssertEqual(app.buttons["camera.shutter"].value as? String, "3 photos")
         tapPreview()
         XCTAssertFalse(toggle.exists)
@@ -52,7 +64,9 @@ final class CameraInteractionTests: XCTestCase {
         let exposure = app.sliders["Center exposure"]
         XCTAssertTrue(exposure.waitForExistence(timeout: 3))
         exposure.adjust(toNormalizedSliderPosition: 0.75)
-        XCTAssertEqual(app.buttons["camera.exposure"].value as? String, "+1.0 EV")
+        assertExposure(exposure, positive: true)
+        exposure.adjust(toNormalizedSliderPosition: 0.25)
+        assertExposure(exposure, positive: false)
         tapPreview()
         XCTAssertFalse(exposure.exists)
     }
@@ -78,6 +92,18 @@ final class CameraInteractionTests: XCTestCase {
         XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["Cancel timer"].exists)
         XCTAssertTrue(app.buttons["camera.shutter"].isEnabled)
+    }
+
+    private func assertExposure(_ slider: XCUIElement, positive: Bool) {
+        let value = slider.value as? String ?? ""
+        XCTAssertEqual(app.buttons["camera.exposure"].value as? String, value)
+        guard let ev = Float(value.replacingOccurrences(of: " EV", with: "")) else {
+            XCTFail("Exposure must have a readable EV value, got \(value)")
+            return
+        }
+        XCTAssertTrue((-2...2).contains(ev))
+        if positive { XCTAssertGreaterThan(ev, 0) }
+        else { XCTAssertLessThan(ev, 0) }
     }
 
     private func selectThreeSecondTimer() {

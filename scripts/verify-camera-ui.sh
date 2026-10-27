@@ -17,6 +17,7 @@ for state in photo wheel focal aeb timer; do
     python3 scripts/wait-for-camera-snapshot.py "$container/Documents/camera-$state.png" "$output_dir/window-$state.png"
     xcrun simctl io "$device_id" screenshot "$output_dir/camera-$state.png"
 done
+test_status=0
 xcodebuild \
     -project Bracket/Bracket.xcodeproj \
     -scheme Bracket \
@@ -25,4 +26,10 @@ xcodebuild \
     -destination "platform=iOS Simulator,id=$device_id" \
     -resultBundlePath "$PWD/.build/camera-ui-tests.xcresult" \
     CODE_SIGNING_ALLOWED=NO \
-    test
+    test || test_status=$?
+if [[ -d "$PWD/.build/camera-ui-tests.xcresult" ]]; then
+    xcrun xcresulttool export attachments \
+        --path "$PWD/.build/camera-ui-tests.xcresult" \
+        --output-path "$PWD/.build/camera-ui-attachments"
+fi
+exit "$test_status"
