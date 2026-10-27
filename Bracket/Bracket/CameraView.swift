@@ -13,6 +13,9 @@ struct CameraView: View {
     @State private var focusTask: Task<Void, Never>?
     @State private var zoomStart: CGFloat?
     @State private var exposureDragStart: Float?
+    @State private var showingZoomWheel = false
+    @State private var mainLensMM: Int?
+    @State private var wheelStartZoom: CGFloat?
 
     var body: some View {
         GeometryReader { geometry in
@@ -36,7 +39,7 @@ struct CameraView: View {
         .background(.black)
         .preferredColorScheme(.dark)
         .statusBarHidden()
-        .onAppear { updateCameraActivity() }
+        .onAppear { camera.start() }
         .task(id: camera.lastCapture) {
             guard camera.lastCapture != nil else { return }
             try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -44,6 +47,12 @@ struct CameraView: View {
             withAnimation { camera.lastCapture = nil }
         }
         .onChange(of: camera.center) { camera.setExposure($0) }
+        .onChange(of: camera.zoom) { zoom in
+            if let mm = mainLensMM, abs(zoom - CGFloat(mm) / 24) > 0.01 { mainLensMM = nil }
+        }
+        .onChange(of: camera.ready) { ready in
+            if !ready { showingZoomWheel = false; mainLensMM = nil }
+        }
         .onChange(of: scenePhase) { _ in updateCameraActivity() }
         .onChange(of: reviewingPhotos) { _ in updateCameraActivity() }
         .onDisappear { focusTask?.cancel(); camera.stop() }
@@ -55,10 +64,7 @@ struct CameraView: View {
 
     private var toolbar: some View {
         HStack {
-            Image(systemName: "bolt.slash.fill")
-                .font(.system(size: 20))
-                .frame(width: 44, height: 44)
-                .accessibilityLabel("Flash off during exposure bracketing")
+            flashControl
             Spacer()
             Button {
                 withAnimation(.easeInOut(duration: 0.22)) { controlsExpanded.toggle() }
@@ -77,15 +83,46 @@ struct CameraView: View {
             } label: {
                 Text("AEB")
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(cameraYellow)
+                    .foregroundStyle(camera.aebEnabled ? cameraYellow : .white.opacity(0.6))
                     .padding(.horizontal, 7).padding(.vertical, 5)
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(cameraYellow, lineWidth: 1))
+                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(camera.aebEnabled ? cameraYellow : .white.opacity(0.6), lineWidth: 1))
                     .frame(width: 44, height: 44)
             }
             .accessibilityLabel("Auto exposure bracketing settings")
+            .accessibilityValue(camera.aebEnabled ? "On" : "Off")
         }
         .foregroundStyle(.white)
         .padding(.horizontal, 16)
+    }
+
+    private var flashControl: some View {
+        Menu {
+            if camera.aebEnabled {
+                Text("Flash is unavailable with AEB")
+                ForEach([AVCaptureDevice.FlashMode.auto, .on], id: \.rawValue) { mode in
+                    if camera.supportedFlashModes.contains(mode) {
+                        Button("Use Flash \(mode == .auto ? "Auto" : "On") (AEB Off)") {
+                            camera.flashMode = mode
+                            camera.aebEnabled = false
+                        }
+                    }
+                }
+            } else {
+                Picker("Flash", selection: $camera.flashMode) {
+                    Text("Off").tag(AVCaptureDevice.FlashMode.off)
+                    if camera.supportedFlashModes.contains(.auto) { Text("Auto").tag(AVCaptureDevice.FlashMode.auto) }
+                    if camera.supportedFlashModes.contains(.on) { Text("On").tag(AVCaptureDevice.FlashMode.on) }
+                }
+            }
+        } label: {
+            Image(systemName: camera.aebEnabled || camera.flashMode == .off ? "bolt.slash.fill" : "bolt.fill")
+                .font(.system(size: 20))
+                .foregroundStyle(!camera.aebEnabled && camera.flashMode != .off ? cameraYellow : .white)
+                .frame(width: 44, height: 44)
+        }
+        .disabled(!camera.ready || camera.busy)
+        .accessibilityLabel("Flash")
+        .accessibilityValue(camera.aebEnabled ? "Off during AEB" : camera.flashMode == .auto ? "Auto" : camera.flashMode == .on ? "On" : "Off")
     }
 
     private var viewfinder: some View {
@@ -127,7 +164,7 @@ struct CameraView: View {
                     if controlsExpanded {
                         aebControls.transition(.move(edge: .bottom).combined(with: .opacity))
                     } else {
-                        zoomControls.padding(.bottom, 18)
+                        zoomInterface
                     }
                 }
             }
@@ -231,17 +268,62 @@ struct CameraView: View {
         }
     }
 
+    private var zoomInterface: some View {
+        ZStack(alignment: .bottom) {
+            if showingZoomWheel {
+                ZoomWheel(zoom: camera.zoom, limits: camera.minZoom...camera.maxZoom, stops: camera.zoomPresets, mainFocalLength: camera.rearCamera ? 24 : nil,
+                          onZoom: camera.setZoom, onClose: { showingZoomWheel = false })
+            } else {
+                zoomControls.padding(.bottom, 18)
+            }
+        }
+        .frame(height: showingZoomWheel ? 150 : 66)
+        .contentShape(Rectangle())
+        .simultaneousGesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
+            .onChanged { value in
+                guard camera.ready, !camera.busy else { return }
+                if wheelStartZoom == nil { wheelStartZoom = camera.zoom }
+                showingZoomWheel = true
+                camera.setZoom((wheelStartZoom ?? camera.zoom) * CGFloat(pow(2, -Double(value.translation.width) / 140)))
+            }
+            .onEnded { _ in wheelStartZoom = nil })
+        .disabled(!camera.ready || camera.busy)
+    }
+
     private var zoomControls: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             ForEach(camera.zoomPresets, id: \.self) { value in
-                Button { camera.setZoom(value) } label: {
-                    Text(isSelectedZoom(value) ? "\(zoomLabel(camera.zoom))×" : zoomLabel(value))
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(isSelectedZoom(value) ? cameraYellow : .white)
-                        .frame(width: 40, height: 40)
-                        .background(.black.opacity(0.55), in: Circle())
+                Button {
+                    guard !showingZoomWheel else { return }
+                    if value == 1, isSelectedZoom(1), camera.rearCamera {
+                        let options = [24, 28, 35].filter { CGFloat($0) / 24 <= camera.maxZoom }
+                        let index = options.firstIndex(of: mainLensMM ?? 24) ?? 0
+                        let mm = options[(index + 1) % options.count]
+                        mainLensMM = mm
+                        camera.setZoom(CGFloat(mm) / 24)
+                    } else {
+                        mainLensMM = nil
+                        camera.setZoom(value)
+                    }
+                } label: {
+                    Group {
+                        if value == 1, isSelectedZoom(1), let mm = mainLensMM {
+                            VStack(spacing: -2) {
+                                Text("\(mm)").font(.system(size: 14, weight: .semibold))
+                                Text("MM").font(.system(size: 9, weight: .medium))
+                            }
+                        } else {
+                            Text(isSelectedZoom(value) ? "\(zoomLabel(camera.zoom))×" : value == 0.5 ? ".5" : zoomLabel(value))
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                    }
+                    .foregroundStyle(isSelectedZoom(value) ? cameraYellow : .white)
+                    .frame(width: 40, height: 40)
+                    .background(isSelectedZoom(value) ? Color(white: 0.18).opacity(0.8) : .clear, in: Circle())
                 }
-                .accessibilityLabel("\(zoomLabel(value)) times zoom")
+                .simultaneousGesture(LongPressGesture(minimumDuration: 0.35).onEnded { _ in showingZoomWheel = true })
+                .accessibilityLabel(value == 1 && camera.rearCamera ? "Main camera. Tap to cycle 24, 28, and 35 millimeters" : "\(zoomLabel(value)) times zoom")
+                .accessibilityHint("Touch and hold to open the zoom wheel")
                 .accessibilityAddTraits(isSelectedZoom(value) ? .isSelected : [])
                 .disabled(!camera.ready || camera.busy)
             }
@@ -253,8 +335,8 @@ struct CameraView: View {
     private var aebControls: some View {
         VStack(spacing: 16) {
             HStack {
-                Text("AEB").foregroundStyle(cameraYellow)
-                Spacer()
+                Toggle("AEB", isOn: $camera.aebEnabled).tint(cameraYellow)
+                Spacer().frame(width: 20)
                 Button { camera.showGrid.toggle() } label: {
                     Image(systemName: "grid")
                         .foregroundStyle(camera.showGrid ? cameraYellow : .white)
@@ -277,7 +359,7 @@ struct CameraView: View {
                         Text("2").tag(Float(2))
                     }.pickerStyle(.segmented)
                 }
-            }
+            }.disabled(!camera.aebEnabled).opacity(camera.aebEnabled ? 1 : 0.4)
             HStack(spacing: 12) {
                 Image(systemName: "plusminus.circle").font(.system(size: 20))
                 Slider(value: $camera.center, in: -2...2, step: 0.5)
@@ -286,14 +368,18 @@ struct CameraView: View {
                     .accessibilityValue("\(ev(camera.center)) EV")
                 Text(ev(camera.center)).monospacedDigit().frame(width: 42, alignment: .trailing)
             }.font(.system(size: 14))
-            HStack(spacing: 0) {
-                ForEach(Array(camera.offsets.enumerated()), id: \.offset) { index, value in
-                    Text(ev(value))
-                        .foregroundStyle(index == camera.count / 2 ? cameraYellow : .white.opacity(0.8))
-                        .frame(maxWidth: .infinity)
-                }
-                Text("EV").foregroundStyle(.white.opacity(0.5))
-            }.font(.system(size: 12, weight: .medium, design: .monospaced))
+            if camera.aebEnabled {
+                HStack(spacing: 0) {
+                    ForEach(Array(camera.offsets.enumerated()), id: \.offset) { index, value in
+                        Text(ev(value))
+                            .foregroundStyle(index == camera.count / 2 ? cameraYellow : .white.opacity(0.8))
+                            .frame(maxWidth: .infinity)
+                    }
+                    Text("EV").foregroundStyle(.white.opacity(0.5))
+                }.font(.system(size: 12, weight: .medium, design: .monospaced))
+                Text("Flash is off during AEB")
+                    .font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
+            }
             if let reason = camera.captureUnavailableReason {
                 Text(reason).font(.system(size: 12)).foregroundStyle(cameraYellow).multilineTextAlignment(.center)
             }
@@ -321,9 +407,9 @@ struct CameraView: View {
                     .frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 5))
                 }
                 .disabled(camera.recentPhotos.isEmpty)
-                .accessibilityLabel("Review last exposure bracket")
+                .accessibilityLabel("Review last capture")
                 Spacer()
-                Button { camera.capture() } label: {
+                Button { showingZoomWheel = false; camera.capture() } label: {
                     ZStack {
                         Circle().stroke(.white, lineWidth: 4).frame(width: 78, height: 78)
                         Circle().fill(.white).frame(width: 66, height: 66)
@@ -332,8 +418,8 @@ struct CameraView: View {
                 }
                 .buttonStyle(ShutterButtonStyle())
                 .disabled(!camera.canCapture)
-                .accessibilityLabel("Take exposure bracket")
-                .accessibilityValue(camera.busy ? "Saving photos" : "\(camera.count) photos, \(camera.spacing) EV spacing")
+                .accessibilityLabel(camera.aebEnabled ? "Take exposure bracket" : "Take photo")
+                .accessibilityValue(camera.busy ? "Saving photos" : camera.aebEnabled ? "\(camera.count) photos, \(camera.spacing) EV spacing" : "Single photo")
                 Spacer()
                 Button { camera.switchCamera() } label: {
                     Image(systemName: "arrow.triangle.2.circlepath.camera")
@@ -363,7 +449,7 @@ struct CameraView: View {
             }
             .tabViewStyle(.page)
             .background(.black)
-            .navigationTitle("Last Bracket")
+            .navigationTitle("Last Capture")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

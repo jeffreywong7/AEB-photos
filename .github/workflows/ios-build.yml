@@ -1,0 +1,27 @@
+name: iOS build
+
+on:
+  pull_request:
+    paths:
+      - 'Bracket/**'
+      - 'scripts/verify-ios.sh'
+      - '.github/workflows/ios-build.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Bracket/**'
+      - 'scripts/verify-ios.sh'
+      - '.github/workflows/ios-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for iOS Simulator
+        run: scripts/verify-ios.sh

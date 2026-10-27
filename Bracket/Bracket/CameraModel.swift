@@ -1,6 +1,7 @@
 import AVFoundation
 import Photos
 import SwiftUI
+import OSLog
 
 final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelegate {
     let session = AVCaptureSession()
@@ -11,6 +12,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     private var images: [Data] = []
     private var captureError: String?
     private var shouldRun = false
+    private let logger = Logger(subsystem: "com.example.Bracket", category: "Camera")
     private var runningObservation: NSKeyValueObservation?
     private var interruptionObservation: NSKeyValueObservation?
     private var runtimeErrorObserver: NSObjectProtocol?
@@ -30,6 +32,9 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     @Published var maxCount = 0
     @Published var minBias: Float = -2
     @Published var maxBias: Float = 2
+    @Published var aebEnabled = true
+    @Published var flashMode: AVCaptureDevice.FlashMode = .off
+    @Published private(set) var supportedFlashModes: [AVCaptureDevice.FlashMode] = [.off]
     @Published var count = 3
     @Published var spacing: Float = 1
     @Published var center: Float = 0
@@ -40,6 +45,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     @Published private(set) var maxZoom: CGFloat = 1
     @Published private(set) var minZoom: CGFloat = 1
     @Published private(set) var zoomPresets: [CGFloat] = [1]
+    @Published private(set) var rearCamera = true
 
     var ready: Bool { sessionRunning && !interrupted && !switchingCamera }
 
@@ -80,7 +86,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     var captureUnavailableReason: String? {
-        guard ready else { return nil }
+        guard ready, aebEnabled else { return nil }
         if maxCount < 3 { return "AEB is unavailable on this camera. Switch cameras to take a bracket." }
         if !offsets.allSatisfy({ $0 >= minBias && $0 <= maxBias }) {
             return "Reduce the EV step or center exposure to fit this camera’s range."
@@ -94,10 +100,11 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     var canCapture: Bool {
-        ready && !busy && count <= maxCount && offsets.allSatisfy { $0 >= minBias && $0 <= maxBias }
+        ready && !busy && (!aebEnabled || (count <= maxCount && offsets.allSatisfy { $0 >= minBias && $0 <= maxBias }))
     }
 
     func start() {
+        logger.info("Camera start requested")
         queue.async { self.shouldRun = true }
         unavailability = nil
         switch AVCaptureDevice.authorizationStatus(for: .video) {
@@ -112,6 +119,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func stop() {
+        logger.info("Camera stop requested")
         queue.async {
             self.shouldRun = false
             if self.session.isRunning { self.session.stopRunning() }
@@ -121,8 +129,9 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     private func configure() {
         queue.async {
             guard self.shouldRun else { return }
+            self.logger.info("Configuring camera session")
             if let camera = self.device {
-                if !self.session.isRunning { self.session.startRunning() }
+                if !self.session.isRunning { self.startSession() }
                 self.publishCapabilities(for: camera)
                 return
             }
@@ -144,10 +153,26 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                 self.session.commitConfiguration()
                 self.device = camera
                 let activeCamera = self.bracketCompatibleCamera(camera)
-                self.session.startRunning()
+                self.startSession()
                 self.publishCapabilities(for: activeCamera, resetZoom: true)
             } catch {
                 DispatchQueue.main.async { self.unavailability = .failure("Could not start the camera: \(error.localizedDescription)") }
+            }
+        }
+    }
+
+    private func startSession() {
+        logger.info("Starting capture session")
+        session.startRunning()
+        let running = session.isRunning
+        let interrupted = session.isInterrupted
+        logger.info("Capture session start returned: running=\(running), interrupted=\(interrupted)")
+        refreshSessionState()
+        if !running && !interrupted {
+            DispatchQueue.main.async {
+                if self.unavailability == nil {
+                    self.unavailability = .failure("The camera could not start. Tap Try Again.")
+                }
             }
         }
     }
@@ -193,7 +218,9 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
         if let connection = output.connection(with: .video), connection.isVideoOrientationSupported {
             connection.videoOrientation = .portrait
         }
+        let rearCamera = camera.position == .back
         let maximum = output.maxBracketedCapturePhotoCount
+        let flashModes = output.supportedFlashModes
         let switchovers = camera.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) }
         let includesUltraWide = camera.constituentDevices.contains { $0.deviceType == .builtInUltraWideCamera }
         let scale: CGFloat = includesUltraWide ? 1 / (switchovers.first ?? 1) : 1
@@ -208,12 +235,15 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             }
         }
         let minimum = camera.minAvailableVideoZoomFactor * scale
-        let zoomLimit = min(camera.maxAvailableVideoZoomFactor * scale, 10)
+        let zoomLimit = min(camera.maxAvailableVideoZoomFactor * scale, 15)
         let currentZoom = camera.videoZoomFactor * scale
         let presets = Array(Set(([minimum, 1, 2] + switchovers.map { $0 * scale })
             .filter { $0 >= minimum && $0 <= zoomLimit })).sorted()
         DispatchQueue.main.async {
+            self.rearCamera = rearCamera
             self.maxCount = maximum
+            self.supportedFlashModes = flashModes
+            if !flashModes.contains(self.flashMode) { self.flashMode = .off }
             self.minBias = camera.minExposureTargetBias
             self.maxBias = camera.maxExposureTargetBias
             self.minZoom = minimum
@@ -314,15 +344,27 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
         busy = true
         lastCapture = nil
         let values = offsets
+        let bracketed = aebEnabled
+        let flash = flashMode
         queue.async {
             self.images = []
             self.captureError = nil
-            let settings = values.map { AVCaptureAutoExposureBracketedStillImageSettings.autoExposureSettings(exposureTargetBias: $0) }
-            let bracket = AVCapturePhotoBracketSettings(rawPixelFormatType: 0, processedFormat: [AVVideoCodecKey: AVVideoCodecType.jpeg], bracketedSettings: settings)
-            if self.output.isLensStabilizationDuringBracketedCaptureSupported {
-                bracket.isLensStabilizationEnabled = true
+            if bracketed {
+                let settings = values.map { AVCaptureAutoExposureBracketedStillImageSettings.autoExposureSettings(exposureTargetBias: $0) }
+                let bracket = AVCapturePhotoBracketSettings(rawPixelFormatType: 0, processedFormat: [AVVideoCodecKey: AVVideoCodecType.jpeg], bracketedSettings: settings)
+                if self.output.isLensStabilizationDuringBracketedCaptureSupported {
+                    bracket.isLensStabilizationEnabled = true
+                }
+                self.output.capturePhoto(with: bracket, delegate: self)
+            } else {
+                guard flash == .off || self.output.supportedFlashModes.contains(flash) else {
+                    DispatchQueue.main.async { self.busy = false; self.message = "Flash is not supported on this camera." }
+                    return
+                }
+                let photo = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+                if flash != .off { photo.flashMode = flash }
+                self.output.capturePhoto(with: photo, delegate: self)
             }
-            self.output.capturePhoto(with: bracket, delegate: self)
         }
     }
 
@@ -340,7 +382,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
         let photos = images
         images.removeAll()
         guard !photos.isEmpty, photos.count == resolvedSettings.expectedPhotoCount else {
-            DispatchQueue.main.async { self.busy = false; self.message = "The exposure bracket was incomplete. Please try again." }
+            DispatchQueue.main.async { self.busy = false; self.message = "The capture was incomplete. Please try again." }
             return
         }
         let previews = photos.compactMap { data in
@@ -348,7 +390,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
         }
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
-                DispatchQueue.main.async { self.busy = false; self.message = "Allow Photos access in Settings to save your bracket." }
+                DispatchQueue.main.async { self.busy = false; self.message = "Allow Photos access in Settings to save your photos." }
                 return
             }
             PHPhotoLibrary.shared().performChanges {
@@ -361,7 +403,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                     self.busy = false
                     if success {
                         self.recentPhotos = previews
-                        self.lastCapture = "Saved \(photos.count) exposures"
+                        self.lastCapture = photos.count == 1 ? "Saved photo" : "Saved \(photos.count) exposures"
                     }
                     else { self.message = "Could not save photos: \(error?.localizedDescription ?? "Unknown error")" }
                 }
