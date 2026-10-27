@@ -141,9 +141,12 @@ final class CameraInteractionTests: XCTestCase {
     func testPhotoInformationUsesOriginalDimensions() {
         app.buttons["Review last capture"].tap()
         XCTAssertTrue(app.buttons["Photo information"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Unknown date"].exists)
         app.buttons["Photo information"].tap()
         XCTAssertTrue(app.staticTexts["Dimensions, 2400 × 3200"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Format, JPEG"].exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Captured,'")).firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["Captured, Unknown"].exists)
         app.buttons["Done"].tap()
         app.buttons["camera.review.close"].tap()
         XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 3))
@@ -188,8 +191,10 @@ final class CameraInteractionTests: XCTestCase {
         let review = app.buttons["Review last capture"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: review)], timeout: 10), .completed)
         app.terminate()
+        app.launchArguments += ["--camera-ui-delay-restoration"]
         app.launch()
         XCTAssertTrue(review.waitForExistence(timeout: 5))
+        assertReviewWaitsForRestoration(review)
         review.tap()
         XCTAssertTrue(app.buttons["Photo information"].waitForExistence(timeout: 5))
         app.buttons["Photo information"].tap()
@@ -224,17 +229,58 @@ final class CameraInteractionTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Dimensions, 1179 × 2556"].exists)
     }
 
-    func testEmptyCaptureReviewCanCancelLibraryAndReturnToCamera() {
+    func testUndatedPhotoReviewShowsUnknownCaptureDate() {
         app.terminate()
-        app.launchArguments += ["--camera-ui-state", "empty"]
+        app.launchArguments += ["--camera-ui-state", "undated"]
         app.launch()
         XCTAssertTrue(app.buttons["Review last capture"].waitForExistence(timeout: 5))
         app.buttons["Review last capture"].tap()
+        XCTAssertTrue(app.staticTexts["Unknown date"].waitForExistence(timeout: 5))
+        app.buttons["Photo information"].tap()
+        XCTAssertTrue(app.staticTexts["Captured, Unknown"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["Format, JPEG"].exists)
+        app.buttons["Done"].tap()
+        app.buttons["camera.review.close"].tap()
+        XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 5))
+    }
+
+    func testEmptyCaptureReviewCanCancelLibraryAndReturnToCamera() {
+        app.terminate()
+        app.launchArguments += ["--camera-ui-state", "empty", "--camera-ui-store", UUID().uuidString, "--camera-ui-delay-restoration"]
+        app.launch()
+        let review = app.buttons["Review last capture"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        assertReviewWaitsForRestoration(review)
+        review.tap()
         let cancel = app.buttons["Cancel"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
         cancel.tap()
         XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["camera.shutter"].isEnabled)
+    }
+
+    func testFailedRestorationStillAllowsLibraryReview() {
+        app.terminate()
+        app.launchArguments += ["--camera-ui-state", "restore-error", "--camera-ui-delay-restoration"]
+        app.launch()
+        let review = app.buttons["Review last capture"]
+        XCTAssertTrue(review.waitForExistence(timeout: 5))
+        assertReviewWaitsForRestoration(review)
+        review.tap()
+        let cancel = app.buttons["Cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        cancel.tap()
+        XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["camera.shutter"].isEnabled)
+    }
+
+    private func assertReviewWaitsForRestoration(_ review: XCUIElement) {
+        XCTAssertFalse(review.isEnabled)
+        review.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertFalse(app.buttons["Browse photo library"].exists)
+        XCTAssertFalse(app.buttons["Cancel"].exists)
+        XCTAssertTrue(app.buttons["camera.shutter"].exists)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: review)], timeout: 20), .completed)
     }
 
     private func assertExposure(_ slider: XCUIElement, positive: Bool) {

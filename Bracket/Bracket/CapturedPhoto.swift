@@ -6,13 +6,13 @@ struct CapturedPhoto: Identifiable {
     let id = UUID()
     let data: Data
     let preview: UIImage
-    let createdAt: Date
+    let createdAt: Date?
 
     init?(data: Data, createdAt: Date? = nil) {
         guard let image = UIImage(data: data) else { return nil }
         self.data = data
         self.preview = image.preparingThumbnail(of: CGSize(width: 1600, height: 1600)) ?? image
-        self.createdAt = createdAt ?? Self.captureDate(in: data) ?? Date()
+        self.createdAt = createdAt ?? PhotoCaptureDate.read(from: data)
     }
 
     var image: UIImage { UIImage(data: data) ?? preview }
@@ -45,16 +45,5 @@ struct CapturedPhoto: Identifiable {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("Bracket-\(UUID().uuidString).\(suffix)")
         try data.write(to: url, options: .atomic)
         return url
-    }
-
-    private static func captureDate(in data: Data) -> Date? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any],
-              let value = exif[kCGImagePropertyExifDateTimeOriginal] as? String else { return nil }
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
-        return formatter.date(from: value)
     }
 }

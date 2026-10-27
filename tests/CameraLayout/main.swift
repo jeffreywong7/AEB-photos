@@ -67,6 +67,16 @@ let exif = metadata[kCGImagePropertyExifDictionary] as! [CFString: Any]
 precondition((exif[kCGImagePropertyExifISOSpeedRatings] as? [Int]) == [100], "Preserve exposure metadata when cropping")
 print("JPEG crop and orientation checks passed")
 
+precondition(PhotoCaptureDate.read(from: original) == nil, "A missing EXIF capture date must stay unknown")
+let datedJPEG = NSMutableData()
+let datedDestination = CGImageDestinationCreateWithData(datedJPEG, UTType.jpeg.identifier as CFString, 1, nil)!
+CGImageDestinationAddImage(datedDestination, context.makeImage()!, [kCGImagePropertyExifDictionary:
+    [kCGImagePropertyExifDateTimeOriginal: "2018:03:30 12:14:32"]] as CFDictionary)
+precondition(CGImageDestinationFinalize(datedDestination))
+let expectedDate = Calendar(identifier: .gregorian).date(from: DateComponents(year: 2018, month: 3, day: 30, hour: 12, minute: 14, second: 32))!
+precondition(PhotoCaptureDate.read(from: datedJPEG as Data) == expectedDate, "Preserve a known EXIF capture date")
+print("Capture date metadata checks passed")
+
 let captureFolder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
 defer { try? FileManager.default.removeItem(at: captureFolder) }
 let captureURL = captureFolder.appendingPathComponent("Photos.plist")
@@ -81,4 +91,18 @@ precondition(restored == saved, "A new store instance must restore every origina
 try store.save([saved[1]])
 let replaced = try store.load()
 precondition(replaced == [saved[1]], "A new capture replaces the previous bracket")
+let undated = StoredCapturePhoto(data: original, createdAt: nil)
+try store.save([undated])
+let restoredUndated = try store.load()
+precondition(restoredUndated == [undated], "Preserve an unknown date without inventing a timestamp")
+let legacyRecords: [[String: Any]] = [["data": original, "createdAt": saved[0].createdAt!]]
+let legacy = try PropertyListSerialization.data(fromPropertyList: legacyRecords, format: .binary, options: 0)
+try legacy.write(to: captureURL, options: .atomic)
+let restoredLegacy = try store.load()
+precondition(restoredLegacy == [saved[0]], "Continue reading captures saved with the original required-date schema")
+try Data("invalid property list".utf8).write(to: captureURL, options: .atomic)
+do {
+    _ = try store.load()
+    preconditionFailure("Invalid stored data must report a restoration error")
+} catch {}
 print("Recent capture persistence checks passed")

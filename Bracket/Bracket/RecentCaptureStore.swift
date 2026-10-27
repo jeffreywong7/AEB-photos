@@ -2,7 +2,7 @@ import Foundation
 
 struct StoredCapturePhoto: Codable, Equatable {
     let data: Data
-    let createdAt: Date
+    let createdAt: Date?
 }
 
 struct RecentCaptureStore {

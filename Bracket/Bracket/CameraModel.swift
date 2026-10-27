@@ -21,6 +21,11 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     private var pendingFocusLock: UUID?
     private var recentCaptureStore = RecentCaptureStore()
 
+    private enum RecentCapture {
+        case restoring
+        case loaded([CapturedPhoto])
+    }
+
     enum FocusState: Equatable {
         case automatic
         case metering(UUID)
@@ -57,7 +62,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     @Published var center: Float = 0
     @Published var showGrid = false
     @Published var lastCapture: String?
-    @Published private(set) var recentPhotos: [CapturedPhoto] = []
+    @Published private var recentCapture: RecentCapture = .restoring
     @Published private(set) var zoom: CGFloat = 1
     @Published private(set) var maxZoom: CGFloat = 1
     @Published private(set) var minZoom: CGFloat = 1
@@ -73,6 +78,16 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     var ready: Bool { sessionRunning && !interrupted && !switchingCamera }
+
+    var recentPhotos: [CapturedPhoto] {
+        if case .loaded(let photos) = recentCapture { return photos }
+        return []
+    }
+
+    var canReview: Bool {
+        if case .loaded = recentCapture { return !busy }
+        return false
+    }
 
     var reviewCover: CapturedPhoto? {
         recentPhotos.isEmpty ? nil : recentPhotos[recentPhotos.count / 2]
@@ -91,11 +106,17 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             zoomPresets = [0.5, 1, 2, 3]
             supportedFlashModes = [.off, .auto, .on]
             showGrid = true
-            if let fileURL = CameraInterfacePreview.recentCaptureURL {
+            if CameraInterfacePreview.state == "restore-error" {
+                recentCaptureStore = RecentCaptureStore(fileURL: FileManager.default.temporaryDirectory)
+                restoreRecentCapture()
+            } else if let fileURL = CameraInterfacePreview.recentCaptureURL {
                 recentCaptureStore = RecentCaptureStore(fileURL: fileURL)
-                recentPhotos = ((try? recentCaptureStore.load()) ?? []).compactMap { CapturedPhoto(data: $0.data, createdAt: $0.createdAt) }
+                restoreRecentCapture {
+                    CameraInterfacePreview.state == "empty" ? [] : CameraInterfacePreview.recentPhotos
+                }
+            } else {
+                recentCapture = .loaded(CameraInterfacePreview.state == "empty" ? [] : CameraInterfacePreview.recentPhotos)
             }
-            if recentPhotos.isEmpty, CameraInterfacePreview.state != "empty" { recentPhotos = CameraInterfacePreview.recentPhotos }
             return
         }
         #endif
@@ -112,12 +133,30 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                 ?? "The camera session stopped unexpectedly. Try again."
             DispatchQueue.main.async { self?.unavailability = .failure(detail) }
         }
-        queue.async {
+        restoreRecentCapture()
+    }
+
+    private func restoreRecentCapture(fallback: @escaping () -> [CapturedPhoto] = { [] }) {
+        let restore = {
+            let photos: [CapturedPhoto]
             do {
-                let photos = try self.recentCaptureStore.load().compactMap { CapturedPhoto(data: $0.data, createdAt: $0.createdAt) }
-                DispatchQueue.main.async { self.recentPhotos = photos }
-            } catch { self.logger.error("Could not restore the last capture: \(error.localizedDescription)") }
+                let restored = try self.recentCaptureStore.load().compactMap { CapturedPhoto(data: $0.data, createdAt: $0.createdAt) }
+                photos = restored.isEmpty ? fallback() : restored
+            } catch {
+                self.logger.error("Could not restore the last capture: \(error.localizedDescription)")
+                photos = []
+            }
+            DispatchQueue.main.async {
+                if case .restoring = self.recentCapture { self.recentCapture = .loaded(photos) }
+            }
         }
+        #if DEBUG
+        if isInterfacePreview, ProcessInfo.processInfo.arguments.contains("--camera-ui-delay-restoration") {
+            queue.asyncAfter(deadline: .now() + 10, execute: restore)
+            return
+        }
+        #endif
+        queue.async(execute: restore)
     }
 
     deinit {
@@ -496,7 +535,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                         CapturedPhoto(data: try PhotoCrop.jpeg(photo.data, aspect: aspect), createdAt: photo.createdAt)
                     }
                     if CameraInterfacePreview.recentCaptureURL != nil { self.storeRecentCapture(photos) }
-                    DispatchQueue.main.async { self.recentPhotos = photos; self.busy = false }
+                    DispatchQueue.main.async { self.recentCapture = .loaded(photos); self.busy = false }
                 } catch {
                     DispatchQueue.main.async { self.message = error.localizedDescription; self.busy = false }
                 }
@@ -577,7 +616,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                         DispatchQueue.main.async {
                             self.busy = false
                             self.setExposure(self.center)
-                            self.recentPhotos = capturedPhotos
+                            self.recentCapture = .loaded(capturedPhotos)
                             self.lastCapture = photos.count == 1 ? "Saved photo" : "Saved \(photos.count) exposures"
                         }
                     }

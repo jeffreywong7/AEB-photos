@@ -10,7 +10,7 @@ enum CameraInterfacePreview {
         guard let index = args.firstIndex(of: "--camera-ui-state"), args.indices.contains(index + 1) else { return "photo" }
         return args[index + 1]
     }
-    static var recentPhotos: [CapturedPhoto] { makeCapture(count: 3) }
+    static var recentPhotos: [CapturedPhoto] { makeCapture(count: 3, dated: state != "undated") }
 
     static var recentCaptureURL: URL? {
         let args = ProcessInfo.processInfo.arguments
@@ -20,7 +20,7 @@ enum CameraInterfacePreview {
             .appendingPathComponent("CameraUITests/\(id.uuidString)/Photos.plist")
     }
 
-    static func makeCapture(count: Int) -> [CapturedPhoto] {
+    static func makeCapture(count: Int, dated: Bool = true) -> [CapturedPhoto] {
         (0..<count).compactMap { index in
             let brightness = CGFloat(min(0.9, 0.45 * pow(2, Double(index - count / 2) * 0.6)))
             let format = UIGraphicsImageRendererFormat()
@@ -33,7 +33,7 @@ enum CameraInterfacePreview {
                 context.cgContext.fill(CGRect(x: 80, y: 120, width: 240, height: 360))
             }
             guard let data = image.jpegData(compressionQuality: 0.95) else { return nil }
-            return CapturedPhoto(data: data, createdAt: Date(timeIntervalSince1970: 1_793_052_060))
+            return CapturedPhoto(data: data, createdAt: dated ? Date(timeIntervalSince1970: 1_793_052_060) : nil)
         }
     }
 

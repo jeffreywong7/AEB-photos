@@ -87,7 +87,11 @@ struct PhotoReviewView: View {
             case .info(let photo):
                 NavigationStack {
                     Form {
-                        LabeledContent("Captured") { Text(photo.createdAt, style: .date) }
+                        if let date = photo.createdAt {
+                            LabeledContent("Captured") { Text(date, style: .date) }
+                        } else {
+                            LabeledContent("Captured", value: "Unknown")
+                        }
                         LabeledContent("Dimensions", value: photo.pixelDimensions)
                         LabeledContent("Format", value: photo.formatName)
                         LabeledContent("File size", value: ByteCountFormatter.string(fromByteCount: Int64(photo.data.count), countStyle: .file))
@@ -128,9 +132,13 @@ struct PhotoReviewView: View {
             .accessibilityIdentifier("camera.review.close")
             Spacer()
             if photos.indices.contains(selection) {
-                VStack(spacing: 2) {
-                    Text(photos[selection].createdAt, style: .date).font(.system(size: 14, weight: .semibold))
-                    Text(photos[selection].createdAt, style: .time).font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
+                if let date = photos[selection].createdAt {
+                    VStack(spacing: 2) {
+                        Text(date, style: .date).font(.system(size: 14, weight: .semibold))
+                        Text(date, style: .time).font(.system(size: 12)).foregroundStyle(.white.opacity(0.65))
+                    }
+                } else {
+                    Text("Unknown date").font(.system(size: 14, weight: .semibold))
                 }
             }
             Spacer()
