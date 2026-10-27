@@ -47,7 +47,7 @@ struct CameraView: View {
             .frame(width: size.width, height: size.height)
             .offset(y: -top)
         }
-        .background(.black.ignoresSafeArea())
+        .background { Color.black.ignoresSafeArea() }
         .preferredColorScheme(.dark)
         .statusBarHidden()
         .onAppear {
