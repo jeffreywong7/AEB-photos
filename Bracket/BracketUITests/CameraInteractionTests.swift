@@ -71,6 +71,37 @@ final class CameraInteractionTests: XCTestCase {
         XCTAssertFalse(exposure.exists)
     }
 
+    func testHoldLocksFocusAndExposureThroughAdjustmentAndCapture() {
+        holdPreview()
+        let lock = app.staticTexts["camera.focusLock"]
+        XCTAssertTrue(lock.waitForExistence(timeout: 3))
+        XCTAssertEqual(lock.label, "AE/AF LOCK")
+        XCTAssertTrue(app.buttons["camera.shutter"].isEnabled)
+        app.buttons["camera.exposure"].tap()
+        let exposure = app.sliders["Center exposure"]
+        XCTAssertTrue(exposure.waitForExistence(timeout: 3))
+        exposure.adjust(toNormalizedSliderPosition: 0.75)
+        assertExposure(exposure, positive: true)
+        app.buttons["camera.controls"].tap()
+        XCTAssertEqual(lock.label, "AE/AF LOCK")
+        app.buttons["camera.shutter"].tap()
+        let review = app.buttons["Review last capture"]
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: review)], timeout: 10), .completed)
+        XCTAssertEqual(lock.label, "AE/AF LOCK")
+        tapPreview()
+        XCTAssertFalse(lock.exists)
+    }
+
+    func testBackgroundingClearsFocusLock() {
+        holdPreview()
+        XCTAssertTrue(app.staticTexts["camera.focusLock"].waitForExistence(timeout: 3))
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["camera.focusLock"].exists)
+        XCTAssertTrue(app.buttons["camera.shutter"].isEnabled)
+    }
+
     func testTimerCanBeCancelledAndRestarted() {
         selectThreeSecondTimer()
         app.buttons["camera.shutter"].tap()
@@ -165,5 +196,9 @@ final class CameraInteractionTests: XCTestCase {
 
     private func tapPreview() {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+    }
+
+    private func holdPreview() {
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35)).press(forDuration: 0.8)
     }
 }

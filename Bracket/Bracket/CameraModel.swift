@@ -17,6 +17,19 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     private var runningObservation: NSKeyValueObservation?
     private var interruptionObservation: NSKeyValueObservation?
     private var runtimeErrorObserver: NSObjectProtocol?
+    private var focusObservations: [NSKeyValueObservation] = []
+    private var pendingFocusLock: UUID?
+
+    enum FocusState: Equatable {
+        case automatic
+        case metering(UUID)
+        case locked
+
+        var isMetering: Bool {
+            if case .metering = self { return true }
+            return false
+        }
+    }
 
     enum Unavailability {
         case permissionDenied
@@ -28,6 +41,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     @Published private(set) var sessionRunning = false
     @Published private(set) var interrupted = false
     @Published private(set) var switchingCamera = false
+    @Published private(set) var focusState: FocusState = .automatic
     @Published var busy = false
     @Published var message: String?
     @Published var maxCount = 0
@@ -129,7 +143,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     var canCapture: Bool {
-        ready && !busy && (!aebEnabled || (count <= maxCount && offsets.allSatisfy { $0 >= minBias && $0 <= maxBias }))
+        ready && !busy && !focusState.isMetering && (!aebEnabled || (count <= maxCount && offsets.allSatisfy { $0 >= minBias && $0 <= maxBias }))
     }
 
     func start() {
@@ -149,10 +163,13 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func stop() {
+        focusState = .automatic
         guard !isInterfacePreview else { return }
         logger.info("Camera stop requested")
         queue.async {
             self.shouldRun = false
+            self.clearPendingFocusLock()
+            if let camera = self.device { self.restoreAutoMetering(on: camera) }
             if self.session.isRunning { self.session.stopRunning() }
         }
     }
@@ -287,10 +304,13 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func switchCamera() {
-        guard !isInterfacePreview else { return }
         guard ready, !busy else { return }
+        focusState = .automatic
+        guard !isInterfacePreview else { return }
         switchingCamera = true
         queue.async {
+            self.clearPendingFocusLock()
+            if let camera = self.device { self.restoreAutoMetering(on: camera) }
             defer {
                 DispatchQueue.main.async {
                     self.switchingCamera = false
@@ -320,7 +340,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func setZoom(_ value: CGFloat) {
-        guard ready, !busy else { return }
+        guard ready, !busy, !focusState.isMetering else { return }
         let target = min(max(value, minZoom), maxZoom)
         zoom = target
         guard !isInterfacePreview else { return }
@@ -337,29 +357,109 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
         }
     }
 
-    func focus(at point: CGPoint) {
+    func focus(at point: CGPoint, lock: Bool = false) {
         guard ready, !busy else { return }
+        let request = UUID()
+        focusState = lock ? .metering(request) : .automatic
+        #if DEBUG
+        if isInterfacePreview {
+            focusState = lock ? .locked : .automatic
+            return
+        }
+        #endif
         queue.async {
-            guard let camera = self.device else { return }
+            self.clearPendingFocusLock()
+            guard self.shouldRun, let camera = self.device else {
+                DispatchQueue.main.async {
+                    if self.focusState == .metering(request) { self.focusState = .automatic }
+                }
+                return
+            }
             do {
                 try camera.lockForConfiguration()
                 defer { camera.unlockForConfiguration() }
-                if camera.isFocusPointOfInterestSupported, camera.isFocusModeSupported(.autoFocus) {
-                    camera.focusPointOfInterest = point
-                    camera.focusMode = .autoFocus
+                if lock {
+                    guard camera.isExposureModeSupported(.autoExpose), camera.isExposureModeSupported(.locked),
+                          camera.isFocusModeSupported(.locked) else {
+                        DispatchQueue.main.async {
+                            if self.focusState == .metering(request) {
+                                self.focusState = .automatic
+                                self.message = "Focus and exposure lock is unavailable on this camera."
+                            }
+                        }
+                        return
+                    }
+                    self.pendingFocusLock = request
+                    self.focusObservations = [
+                        camera.observe(\.focusMode, options: [.new]) { [weak self] camera, _ in
+                            self?.queue.async { self?.finishFocusLock(request, on: camera) }
+                        },
+                        camera.observe(\.exposureMode, options: [.new]) { [weak self] camera, _ in
+                            self?.queue.async { self?.finishFocusLock(request, on: camera) }
+                        },
+                        camera.observe(\.isAdjustingFocus, options: [.new]) { [weak self] camera, _ in
+                            self?.queue.async { self?.finishFocusLock(request, on: camera) }
+                        },
+                        camera.observe(\.isAdjustingExposure, options: [.new]) { [weak self] camera, _ in
+                            self?.queue.async { self?.finishFocusLock(request, on: camera) }
+                        }
+                    ]
                 }
-                if camera.isExposurePointOfInterestSupported, camera.isExposureModeSupported(.continuousAutoExposure) {
-                    camera.exposurePointOfInterest = point
-                    camera.exposureMode = .continuousAutoExposure
+                if camera.isFocusPointOfInterestSupported { camera.focusPointOfInterest = point }
+                if camera.isFocusModeSupported(.autoFocus) { camera.focusMode = .autoFocus }
+                if camera.isExposurePointOfInterestSupported { camera.exposurePointOfInterest = point }
+                if lock { camera.exposureMode = .autoExpose }
+                else if camera.isExposureModeSupported(.continuousAutoExposure) { camera.exposureMode = .continuousAutoExposure }
+                if lock {
+                    self.queue.async { self.finishFocusLock(request, on: camera) }
+                    self.queue.asyncAfter(deadline: .now() + 5) { [weak self] in
+                        guard let self, self.pendingFocusLock == request else { return }
+                        self.clearPendingFocusLock()
+                        self.restoreAutoMetering(on: camera)
+                        DispatchQueue.main.async {
+                            if self.focusState == .metering(request) {
+                                self.focusState = .automatic
+                                self.message = "The camera could not finish locking focus and exposure. Try again."
+                            }
+                        }
+                    }
                 }
             } catch {
-                DispatchQueue.main.async { self.message = "Could not adjust focus: \(error.localizedDescription)" }
+                self.clearPendingFocusLock()
+                DispatchQueue.main.async {
+                    if self.focusState == .metering(request) { self.focusState = .automatic }
+                    self.message = "Could not adjust focus: \(error.localizedDescription)"
+                }
             }
         }
     }
 
+    private func finishFocusLock(_ request: UUID, on camera: AVCaptureDevice) {
+        guard pendingFocusLock == request, camera === device,
+              camera.focusMode == .locked, camera.exposureMode == .locked,
+              !camera.isAdjustingFocus, !camera.isAdjustingExposure else { return }
+        clearPendingFocusLock()
+        DispatchQueue.main.async {
+            if self.focusState == .metering(request) { self.focusState = .locked }
+        }
+    }
+
+    private func clearPendingFocusLock() {
+        pendingFocusLock = nil
+        focusObservations.removeAll()
+    }
+
+    private func restoreAutoMetering(on camera: AVCaptureDevice) {
+        do {
+            try camera.lockForConfiguration()
+            defer { camera.unlockForConfiguration() }
+            if camera.isFocusModeSupported(.continuousAutoFocus) { camera.focusMode = .continuousAutoFocus }
+            if camera.isExposureModeSupported(.continuousAutoExposure) { camera.exposureMode = .continuousAutoExposure }
+        } catch { logger.error("Could not restore automatic metering: \(error.localizedDescription)") }
+    }
+
     func setExposure(_ value: Float) {
-        guard ready, !busy else { return }
+        guard ready, !busy, !focusState.isMetering else { return }
         queue.async {
             guard let camera = self.device else { return }
             do {
@@ -398,6 +498,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
         let bracketed = aebEnabled
         let flash = flashMode
         let aspect = photoAspect
+        let locked = focusState == .locked
         queue.async {
             self.capturedAspect = aspect
             self.images = []
@@ -415,6 +516,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                     return
                 }
                 let photo = AVCapturePhotoSettings(format: [AVVideoCodecKey: AVVideoCodecType.jpeg])
+                if locked { photo.photoQualityPrioritization = .speed }
                 if flash != .off { photo.flashMode = flash }
                 self.output.capturePhoto(with: photo, delegate: self)
             }
@@ -459,6 +561,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             } completionHandler: { success, error in
                 DispatchQueue.main.async {
                     self.busy = false
+                    self.setExposure(self.center)
                     if success {
                         self.recentPhotos = capturedPhotos
                         self.lastCapture = photos.count == 1 ? "Saved photo" : "Saved \(photos.count) exposures"

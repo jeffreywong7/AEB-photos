@@ -91,6 +91,11 @@ struct CameraView: View {
         .onChange(of: camera.ready) { ready in
             if !ready { showingZoomWheel = false; mainLensMM = nil; cancelCountdown() }
         }
+        .onChange(of: camera.focusState) { state in
+            if state == .locked { focusTask?.cancel() }
+            else if state == .automatic, let point = focusPoint { displayFocus(at: point) }
+        }
+        .onChange(of: camera.photoAspect) { _ in focusPoint = nil }
         .onChange(of: scenePhase) { _ in updateCameraActivity() }
         .onChange(of: reviewingPhotos) { _ in updateCameraActivity() }
         .onDisappear { focusTask?.cancel(); cancelCountdown(); camera.stop() }
@@ -121,7 +126,7 @@ struct CameraView: View {
             .accessibilityValue("\(ev(camera.center)) EV")
         }
         .fixedSize()
-        .disabled(camera.busy || countdown != nil)
+        .disabled(camera.busy || countdown != nil || camera.focusState.isMetering)
     }
 
     private var flashControl: some View {
@@ -162,8 +167,18 @@ struct CameraView: View {
         displayFocus(at: point)
     }
 
+    private func cameraHeld(at point: CGPoint, devicePoint: CGPoint) {
+        guard camera.ready, !camera.busy, countdown == nil else { return }
+        selectedPanel = nil
+        showingZoomWheel = false
+        focusTask?.cancel()
+        focusPoint = point
+        camera.focus(at: devicePoint, lock: true)
+    }
+
     private var cameraPreview: some View {
-        CameraPreview(session: camera.session, onFocus: cameraTapped)
+        CameraPreview(session: camera.isInterfacePreview ? nil : camera.session,
+                      onFocus: cameraTapped, onLock: cameraHeld)
     }
 
     private var viewfinder: some View {
@@ -172,10 +187,8 @@ struct CameraView: View {
                 Group {
                     #if DEBUG
                     if camera.isInterfacePreview {
-                        CameraPreviewScene().aspectRatio(CGFloat(3) / 4, contentMode: .fill).gesture(SpatialTapGesture().onEnded { value in
-                            let point = value.location
-                            cameraTapped(at: point, devicePoint: CGPoint(x: point.x / geometry.size.width, y: point.y / geometry.size.height))
-                        })
+                        CameraPreviewScene().aspectRatio(CGFloat(3) / 4, contentMode: .fill)
+                            .overlay { cameraPreview }
                     }
                     else { cameraPreview }
                     #else
@@ -216,11 +229,29 @@ struct CameraView: View {
             .frame(width: geometry.size.width, height: geometry.size.height)
             .background(Color(white: 0.08))
             .clipped()
+            .onAppear {
+                #if DEBUG
+                if camera.isInterfacePreview, CameraInterfacePreview.state == "locked" {
+                    cameraHeld(at: CGPoint(x: geometry.size.width / 2, y: geometry.size.height / 2),
+                               devicePoint: CGPoint(x: 0.5, y: 0.5))
+                }
+                #endif
+            }
         }
     }
 
     private var cameraToolsOverlay: some View {
         VStack {
+            if camera.focusState != .automatic {
+                Text(camera.focusState == .locked ? "AE/AF LOCK" : "Locking focus…")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .background(cameraYellow, in: RoundedRectangle(cornerRadius: 3))
+                    .padding(.top, 12)
+                    .accessibilityIdentifier("camera.focusLock")
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
             if let status = camera.lastCapture {
                 Text(status)
                     .font(.system(size: 12, weight: .medium))
@@ -298,7 +329,7 @@ struct CameraView: View {
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 1)
                 .onChanged { value in
-                    guard camera.ready, !camera.busy else { return }
+                    guard camera.ready, !camera.busy, !camera.focusState.isMetering else { return }
                     focusTask?.cancel()
                     if exposureDragStart == nil { exposureDragStart = camera.center }
                     let exposure = (exposureDragStart ?? 0) - Float(value.translation.height / 80)
@@ -306,12 +337,12 @@ struct CameraView: View {
                 }
                 .onEnded { _ in
                     exposureDragStart = nil
-                    if let point = focusPoint { displayFocus(at: point) }
+                    if let point = focusPoint, camera.focusState == .automatic { displayFocus(at: point) }
                 })
             .accessibilityLabel("Exposure")
             .accessibilityValue("\(ev(camera.center)) EV")
             .accessibilityAdjustableAction { direction in
-                guard camera.ready, !camera.busy else { return }
+                guard camera.ready, !camera.busy, !camera.focusState.isMetering else { return }
                 switch direction {
                 case .increment: camera.center = min(camera.center + 0.5, 2)
                 case .decrement: camera.center = max(camera.center - 0.5, -2)
@@ -323,6 +354,7 @@ struct CameraView: View {
     private func displayFocus(at point: CGPoint) {
         focusTask?.cancel()
         focusPoint = point
+        guard camera.focusState == .automatic else { return }
         focusTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
@@ -349,7 +381,7 @@ struct CameraView: View {
                 camera.setZoom((wheelStartZoom ?? camera.zoom) * CGFloat(pow(2, -Double(value.translation.width) / 140)))
             }
             .onEnded { _ in wheelStartZoom = nil })
-        .disabled(!camera.ready || camera.busy)
+        .disabled(!camera.ready || camera.busy || camera.focusState.isMetering)
     }
 
     private var zoomControls: some View {
@@ -428,7 +460,7 @@ struct CameraView: View {
         .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 20)
         .foregroundStyle(.white)
         .background(.ultraThinMaterial)
-        .disabled(camera.busy || countdown != nil)
+        .disabled(camera.busy || countdown != nil || camera.focusState.isMetering)
     }
 
     private var exposureSettings: some View {
@@ -690,27 +722,40 @@ private struct ShutterButtonStyle: ButtonStyle {
 }
 
 struct CameraPreview: UIViewRepresentable {
-    let session: AVCaptureSession
+    let session: AVCaptureSession?
     let onFocus: (CGPoint, CGPoint) -> Void
+    let onLock: (CGPoint, CGPoint) -> Void
 
     func makeUIView(context: Context) -> PreviewView {
         let view = PreviewView()
         view.previewLayer.session = session
         view.previewLayer.videoGravity = .resizeAspectFill
         view.onFocus = onFocus
+        view.onLock = onLock
+        view.accessibilityIdentifier = "camera.viewfinder"
         return view
     }
 
-    func updateUIView(_ view: PreviewView, context: Context) { view.onFocus = onFocus }
+    func updateUIView(_ view: PreviewView, context: Context) {
+        view.onFocus = onFocus
+        view.onLock = onLock
+    }
 
     final class PreviewView: UIView {
         var onFocus: ((CGPoint, CGPoint) -> Void)?
+        var onLock: ((CGPoint, CGPoint) -> Void)?
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
         var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
 
         override init(frame: CGRect) {
             super.init(frame: frame)
-            addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(focus(_:))))
+            backgroundColor = .clear
+            let tap = UITapGestureRecognizer(target: self, action: #selector(focus(_:)))
+            let hold = UILongPressGestureRecognizer(target: self, action: #selector(lock(_:)))
+            hold.minimumPressDuration = 0.6
+            tap.require(toFail: hold)
+            addGestureRecognizer(tap)
+            addGestureRecognizer(hold)
         }
 
         required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -724,7 +769,18 @@ struct CameraPreview: UIViewRepresentable {
 
         @objc private func focus(_ gesture: UITapGestureRecognizer) {
             let point = gesture.location(in: self)
-            onFocus?(point, previewLayer.captureDevicePointConverted(fromLayerPoint: point))
+            onFocus?(point, devicePoint(for: point))
+        }
+
+        @objc private func lock(_ gesture: UILongPressGestureRecognizer) {
+            guard gesture.state == .began else { return }
+            let point = gesture.location(in: self)
+            onLock?(point, devicePoint(for: point))
+        }
+
+        private func devicePoint(for point: CGPoint) -> CGPoint {
+            if previewLayer.session != nil { return previewLayer.captureDevicePointConverted(fromLayerPoint: point) }
+            return CGPoint(x: point.x / bounds.width, y: point.y / bounds.height)
         }
     }
 }

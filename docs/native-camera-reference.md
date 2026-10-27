@@ -21,3 +21,11 @@ The original screenshots remain local reference material and are not included in
 ## Aspect framing
 
 The Aspect tool follows Apple's documented 4:3, 1:1, and 16:9 choices. The default 4:3 measurements remain unchanged. Other choices center the capture viewport on the same point while keeping the toolbar, shutter, and footer stable. JPEG center crops account for EXIF orientation; the default uncropped image is passed through without re-encoding. ImageIO tests cover dimensions, orientation, and retained ISO metadata. The framing still needs comparison with the native app on the physical iPhone.
+
+## Focus and exposure lock
+
+Apple documents touching and holding the focus area to lock, then tapping to unlock in its [camera tools guide](https://support.apple.com/en-ae/guide/iphone/iph3dc593597/27/ios/27). The app observes the one-shot auto-focus and auto-exposure modes reaching locked, with no adjustment still in progress, before showing the lock badge. Release the lock on camera stop or camera switching.
+
+The [combined triple camera](https://developer.apple.com/documentation/avfoundation/avcapturedevice/devicetype-swift.struct/builtintriplecamera) does not support custom exposure or manual exposure bracketing. Apple's [exposureTargetBias documentation](https://developer.apple.com/documentation/avfoundation/avcapturedevice/exposuretargetbias) states that bias affects actual exposure in locked mode. Keep the combined camera and EV-bias brackets instead of replacing the three-lens selector with a manual-only physical camera. Verify bracket exposure stability on the device; the simulator cannot establish it.
+
+For single photos, Apple's [custom/locked exposure discussion](https://developer.apple.com/documentation/avfoundation/avcapturedevice/setexposuremodecustom(duration:iso:completionhandler:)) requires speed quality prioritization to prevent multi-image fusion overriding locked duration and ISO. This setting is applied only to locked single-photo captures.
