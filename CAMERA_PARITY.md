@@ -4,7 +4,7 @@ The target is a photo-only camera as close as possible to the native iPhone 15 P
 
 ## Current evidence
 
-At `ccbe462`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, capture-date metadata checks, storage checks, and all seventeen UI interactions pass. These include delayed restoration, empty/error recovery, unknown capture dates, relaunch recovery, and library PNG selection. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40498519084). A subsequent iPhone report identified a frozen horizon level. The level now samples current gravity on a 30 Hz display schedule; a new UI case drives changing tilt and lifecycle transitions, with screenshots of the rendered angles.
+At `ccbe462`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, capture-date metadata checks, storage checks, and all seventeen UI interactions pass. These include delayed restoration, empty/error recovery, unknown capture dates, relaunch recovery, and library PNG selection. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40498519084). A subsequent iPhone report identified a frozen horizon level. The changing-motion UI test failed on `c1812bb`: lifecycle logs showed that the activation callback read the captured inactive phase and never started sampling. The level now observes its combined enabled/active value and uses the callback's new value. The same correction is applied to camera lifecycle callbacks. Native verification of this correction is pending; physical motion and haptics still need an iPhone check.
 
 | Area | Implemented | Verified | Still required |
 | --- | --- | --- | --- |

@@ -126,14 +126,13 @@ struct CameraLevelOverlay: View {
         }
         .frame(width: 180, height: 48)
         .allowsHitTesting(false)
-        .onAppear { updateSensor() }
-        .onChange(of: enabled) { _ in updateSensor() }
-        .onChange(of: scenePhase) { _ in updateSensor() }
+        .onAppear { updateSensor(active: active) }
+        .onChange(of: active) { active in updateSensor(active: active) }
         .onDisappear { sensor.stop() }
     }
 
-    private func updateSensor() {
-        Logger(subsystem: "com.example.Bracket", category: "CameraLevel").notice("Level lifecycle enabled=\(enabled), scene=\(String(describing: scenePhase), privacy: .public), preview=\(preview)")
+    private func updateSensor(active: Bool) {
+        Logger(subsystem: "com.example.Bracket", category: "CameraLevel").notice("Level lifecycle active=\(active), preview=\(preview)")
         if active { sensor.start(preview: preview) }
         else { sensor.stop() }
     }

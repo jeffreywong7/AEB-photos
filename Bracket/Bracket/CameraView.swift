@@ -96,8 +96,8 @@ struct CameraView: View {
             else if state == .automatic, let point = focusPoint { displayFocus(at: point) }
         }
         .onChange(of: camera.photoAspect) { _ in focusPoint = nil }
-        .onChange(of: scenePhase) { _ in updateCameraActivity() }
-        .onChange(of: reviewingPhotos) { _ in updateCameraActivity() }
+        .onChange(of: scenePhase) { phase in updateCameraActivity(phase: phase, reviewing: reviewingPhotos) }
+        .onChange(of: reviewingPhotos) { reviewing in updateCameraActivity(phase: scenePhase, reviewing: reviewing) }
         .onDisappear { focusTask?.cancel(); cancelCountdown(); camera.stop() }
         .fullScreenCover(isPresented: $reviewingPhotos) { photoReview }
         .alert("Camera", isPresented: Binding(get: { camera.message != nil }, set: { if !$0 { camera.message = nil } })) {
@@ -707,10 +707,10 @@ struct CameraView: View {
         return value == selected
     }
 
-    private func updateCameraActivity() {
-        if scenePhase != .active { cancelCountdown() }
-        if reviewingPhotos || scenePhase == .background { camera.stop() }
-        else if scenePhase == .active { camera.start() }
+    private func updateCameraActivity(phase: ScenePhase, reviewing: Bool) {
+        if phase != .active { cancelCountdown() }
+        if reviewing || phase == .background { camera.stop() }
+        else if phase == .active { camera.start() }
     }
 }
 
