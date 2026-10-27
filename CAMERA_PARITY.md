@@ -4,7 +4,7 @@ The target is a photo-only camera as close as possible to the native iPhone 15 P
 
 ## Current evidence
 
-At `b09ce46`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, storage checks, and fourteen of fifteen UI interactions pass. Relaunch recovery and empty-library cancellation pass. The remaining picker test identifies the correct screenshot image, but XCTest cannot resolve a hit point for it. The exported hierarchy and screenshot show the image visible at its reported bounds. The next run taps the center of those bounds and retains the PNG format/dimension assertions. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40488182094).
+At `f082663`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, storage checks, and all fifteen UI interactions pass. These include relaunch recovery, empty-library cancellation, and selecting a library PNG while preserving its format and 1179×2556 dimensions. The photo, focal, wheel, AEB, timer, square/wide, lock, review, and native-library screens were inspected in simulator artifacts. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40489428032).
 
 | Area | Implemented | Verified | Still required |
 | --- | --- | --- | --- |
@@ -16,7 +16,7 @@ At `b09ce46`, native Debug and Release builds, layout/level checks, ImageIO crop
 | Aspect | 4:3, 1:1, and 16:9 framing with matching JPEG center crops | Touch capture produces square/wide dimensions; ImageIO checks preserve orientation and ISO; uncropped data is unchanged | Real-camera framing comparison |
 | Timer | Off/3/5/10-second options and cancellation | Cancel/restart and background cancellation pass touch tests | Actual delayed capture on iPhone |
 | Hardware shutter | Supported iOS 18+ capture-event API routed through the shutter action | Native compilation | Volume-button delivery and timer cancellation on iPhone |
-| Photo review | Paging, thumbnails, pinch/double-tap zoom, drag dismissal, sharing/information; retain the latest bracket across launches; open the system photo library | Zoom, navigation, dimensions, relaunch recovery, empty-library cancellation, and stored bytes/timestamps pass; selected library HEIF rendered correctly; PNG selection query rerun pending | Verify sharing and iCloud loading on iPhone |
+| Photo review | Paging, thumbnails, pinch/double-tap zoom, drag dismissal, sharing/information; retain the latest bracket across launches; open the system photo library | Zoom, navigation, dimensions, relaunch recovery, empty-library cancellation, PNG format/dimensions, and stored bytes/timestamps pass; library HEIF rendered correctly | Verify sharing and iCloud loading on iPhone |
 | Startup and permissions | Start on appearance, observe actual session state, preserve temporary inactivity, Settings/retry actions | Native compilation; UI fixture launches successfully | Cold launch, permission approval/denial, interruption, and real-session resume |
 
 ## Remaining differences
@@ -26,20 +26,20 @@ At `b09ce46`, native Debug and Release builds, layout/level checks, ImageIO crop
 
 ## Device validation
 
-The local host has no Xcode or accessible iPhone. CI runs macOS/Xcode builds and simulator tests with the real camera UI and a debug-only neutral fixture. Those tests do not prove physical capture or permission handling.
+The local host has no Xcode, and agent device access is disabled in this environment. CI runs macOS/Xcode builds and simulator tests with the real camera UI and a debug-only neutral fixture. Those tests do not prove physical capture or permission handling.
 
 On the iPhone, check cold launch before backgrounding, first camera permission approval, returning from Control Center, background/foreground transitions, switching cameras, photo review and return, valid and invalid AEB ranges, and Photos permission denial. Check flash with AEB off in bright and dark scenes. Check each available lens, wheel dragging, focal-length cycling, focus/exposure, level/haptics, and timer/volume-button capture. Compare saved images with the preview and confirm every requested exposure appears in Photos.
 
 The original reference photos remain local and are not included in the repository or CI artifacts.
 
-## Aspect-ratio follow-up
+## Aspect ratios
 
 The viewfinder supports 4:3, 1:1, and 16:9 while retaining the measured toolbar/shutter/footer anchors. Each capture snapshots its selected aspect; JPEG processing applies the matching center crop to every exposure before saving. A 4:3 image that needs no crop retains its original bytes. Crop geometry accounts for EXIF rotation, and the encoder preserves orientation and exposure metadata. Geometry/ImageIO checks and the touch test checking square/wide output dimensions pass at `99fb9cf`. Real-camera framing still needs the device comparison.
 
-## Focus-lock follow-up
+## Focus lock
 
 Touch and hold meters the selected point once, then displays AE/AF LOCK after observing locked focus/exposure modes and completed adjustments. A five-second failure releases metering and reports the problem. Tapping the preview refocuses; stopping the camera or switching cameras restores automatic metering. Single photos use speed prioritization while locked so image fusion does not override the locked exposure. AEB continues to use EV-bias bracket settings on the combined camera; this preserves access to its physical lenses. Confirm the locked reference and each bracket's actual exposure on an iPhone before treating this as verified capture behavior.
 
-## Photo-review follow-up
+## Photo review
 
-The latest saved bracket is retained in one atomically replaced binary property list in Application Support, excluded from backup. Loading and writing run off the main thread; a failed local copy does not undo a successful Photos save. The thumbnail and full-resolution review return after relaunch in the touch test. The system photo picker provides photo-only library browsing, including an empty-capture flow. The selected representation is reviewed and shared without re-encoding, with its actual file type and orientation-aware dimensions. Stored bytes/timestamps and picker cancellation pass; the PNG selection query is being rerun.
+The latest saved bracket is retained in one atomically replaced binary property list in Application Support, excluded from backup. Loading and writing run off the main thread; a failed local copy does not undo a successful Photos save. The thumbnail and full-resolution review return after relaunch in the touch test. The system photo picker provides photo-only library browsing, including an empty-capture flow. The selected representation is reviewed and shared without re-encoding, with its actual file type and orientation-aware dimensions. Stored bytes/timestamps, picker cancellation, and PNG selection pass. The picker test locates the screenshot image through accessibility, checks that its bounds are visible, and taps its center because the system grid provides no XCTest hit point.
