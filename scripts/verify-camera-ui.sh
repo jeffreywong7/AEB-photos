@@ -11,7 +11,7 @@ xcrun simctl boot "$device_id"
 xcrun simctl bootstatus "$device_id" -b
 xcrun simctl install "$device_id" "$app_path"
 container="$(xcrun simctl get_app_container "$device_id" com.example.Bracket data)"
-for state in photo wheel focal aeb timer; do
+for state in photo wheel focal aeb timer review; do
     xcrun simctl terminate "$device_id" com.example.Bracket >/dev/null 2>&1 || true
     xcrun simctl launch "$device_id" com.example.Bracket --camera-ui-preview --camera-ui-state "$state"
     python3 scripts/wait-for-camera-snapshot.py "$container/Documents/camera-$state.png" "$output_dir/window-$state.png"

@@ -61,6 +61,10 @@ struct CameraView: View {
                 case "wheel": showingZoomWheel = true; camera.setZoom(0.7)
                 case "focal": mainLensMM = 35; camera.setZoom(CGFloat(35) / 24)
                 case "timer": selectedPanel = .timer; timerSeconds = 3
+                case "review":
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { reviewingPhotos = true }
                 default: break
                 }
             }
@@ -561,8 +565,8 @@ struct CameraView: View {
         HStack {
             Button { reviewingPhotos = true } label: {
                 Group {
-                    if let thumbnail = camera.recentPhotos.first {
-                        Image(uiImage: thumbnail).resizable().scaledToFill()
+                    if let thumbnail = camera.reviewCover {
+                        Image(uiImage: thumbnail.preview).resizable().scaledToFill()
                     } else {
                         Circle().fill(Color(white: 0.13))
                             .overlay(Image(systemName: "photo").font(.system(size: 19)).foregroundStyle(.white.opacity(0.5)))
@@ -630,24 +634,7 @@ struct CameraView: View {
     }
 
     private var photoReview: some View {
-        NavigationStack {
-            TabView {
-                ForEach(camera.recentPhotos.indices, id: \.self) { index in
-                    Image(uiImage: camera.recentPhotos[index])
-                        .resizable().scaledToFit()
-                        .accessibilityLabel("Exposure \(index + 1) of \(camera.recentPhotos.count)")
-                }
-            }
-            .tabViewStyle(.page)
-            .background(.black)
-            .navigationTitle("Last Capture")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { reviewingPhotos = false }.tint(cameraYellow)
-                }
-            }
-        }.preferredColorScheme(.dark)
+        PhotoReviewView(photos: camera.recentPhotos)
     }
 
     private func settingLabel(_ title: String) -> some View {

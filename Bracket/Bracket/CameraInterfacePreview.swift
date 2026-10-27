@@ -1,5 +1,6 @@
-#if DEBUG
 import SwiftUI
+
+#if DEBUG
 
 // These fixtures exercise the real camera UI without requesting simulator camera access.
 enum CameraInterfacePreview {
@@ -9,6 +10,22 @@ enum CameraInterfacePreview {
         guard let index = args.firstIndex(of: "--camera-ui-state"), args.indices.contains(index + 1) else { return "photo" }
         return args[index + 1]
     }
+    static var recentPhotos: [CapturedPhoto] {
+        [CGFloat(0.22), 0.45, 0.7].compactMap { brightness in
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let image = UIGraphicsImageRenderer(size: CGSize(width: 2400, height: 3200), format: format).image { context in
+                context.cgContext.scaleBy(x: 4, y: 4)
+                UIColor(white: brightness, alpha: 1).setFill()
+                context.cgContext.fill(CGRect(x: 0, y: 0, width: 600, height: 800))
+                UIColor(red: brightness * 0.7, green: brightness, blue: brightness * 0.9, alpha: 1).setFill()
+                context.cgContext.fill(CGRect(x: 80, y: 120, width: 240, height: 360))
+            }
+            guard let data = image.jpegData(compressionQuality: 0.95) else { return nil }
+            return CapturedPhoto(data: data, createdAt: Date(timeIntervalSince1970: 1_793_052_060))
+        }
+    }
+
 }
 
 struct CameraPreviewScene: View {
@@ -67,9 +84,11 @@ struct CameraSnapshotWriter: UIViewRepresentable {
 
 extension View {
     @ViewBuilder
-    func cameraSnapshotPreview() -> some View {
+    func cameraSnapshotPreview(review: Bool = false) -> some View {
         #if DEBUG
-        if CameraInterfacePreview.enabled { background(CameraSnapshotWriter().frame(width: 0, height: 0)) }
+        if CameraInterfacePreview.enabled && (CameraInterfacePreview.state != "review" || review) {
+            background(CameraSnapshotWriter().frame(width: 0, height: 0))
+        }
         else { self }
         #else
         self

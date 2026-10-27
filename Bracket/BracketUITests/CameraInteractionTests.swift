@@ -94,6 +94,38 @@ final class CameraInteractionTests: XCTestCase {
         XCTAssertTrue(app.buttons["camera.shutter"].isEnabled)
     }
 
+    func testPhotoReviewDoubleTapZoomAndReturn() {
+        app.buttons["Review last capture"].tap()
+        let image = app.descendants(matching: .any)["camera.review.image.1"]
+        XCTAssertTrue(image.waitForExistence(timeout: 5))
+        XCTAssertEqual(image.value as? String, "Fit")
+        image.doubleTap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Zoomed"), object: image)], timeout: 3), .completed)
+        image.doubleTap()
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "Fit"), object: image)], timeout: 3), .completed)
+        app.buttons["camera.review.close"].tap()
+        XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 3))
+    }
+
+    func testPhotoInformationUsesOriginalDimensions() {
+        app.buttons["Review last capture"].tap()
+        XCTAssertTrue(app.buttons["Photo information"].waitForExistence(timeout: 5))
+        app.buttons["Photo information"].tap()
+        XCTAssertTrue(app.staticTexts["2400 × 3200"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["JPEG"].exists)
+        app.buttons["Done"].tap()
+        app.buttons["camera.review.close"].tap()
+        XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 3))
+    }
+
+    func testPhotoReviewDragDownReturnsCamera() {
+        app.buttons["Review last capture"].tap()
+        XCTAssertTrue(app.buttons["camera.review.close"].waitForExistence(timeout: 5))
+        let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.45))
+        start.press(forDuration: 0.01, thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)))
+        XCTAssertTrue(app.buttons["camera.shutter"].waitForExistence(timeout: 3))
+    }
+
     private func assertExposure(_ slider: XCUIElement, positive: Bool) {
         let value = slider.value as? String ?? ""
         XCTAssertEqual(app.buttons["camera.exposure"].value as? String, value)

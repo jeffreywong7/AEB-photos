@@ -9,12 +9,14 @@ build_dir="${BRACKET_BUILD_DIR:-$PWD/.build/ios}"
 mkdir -p "$build_dir"
 xcrun swiftc Bracket/Bracket/CameraLayout.swift Bracket/Bracket/CameraLevelReading.swift tests/CameraLayout/main.swift -o "$build_dir/check-camera-layout"
 "$build_dir/check-camera-layout"
+for configuration in Debug Release; do
 xcodebuild \
     -project Bracket/Bracket.xcodeproj \
     -scheme Bracket \
-    -configuration Debug \
+    -configuration "$configuration" \
     -derivedDataPath "$build_dir" \
     -sdk iphonesimulator \
     -destination 'generic/platform=iOS Simulator' \
     CODE_SIGNING_ALLOWED=NO \
     build
+done

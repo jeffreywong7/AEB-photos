@@ -40,7 +40,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     @Published var center: Float = 0
     @Published var showGrid = false
     @Published var lastCapture: String?
-    @Published var recentPhotos: [UIImage] = []
+    @Published private(set) var recentPhotos: [CapturedPhoto] = []
     @Published private(set) var zoom: CGFloat = 1
     @Published private(set) var maxZoom: CGFloat = 1
     @Published private(set) var minZoom: CGFloat = 1
@@ -57,6 +57,10 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
 
     var ready: Bool { sessionRunning && !interrupted && !switchingCamera }
 
+    var reviewCover: CapturedPhoto? {
+        recentPhotos.isEmpty ? nil : recentPhotos[recentPhotos.count / 2]
+    }
+
     override init() {
         super.init()
         #if DEBUG
@@ -70,6 +74,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             zoomPresets = [0.5, 1, 2, 3]
             supportedFlashModes = [.off, .auto, .on]
             showGrid = true
+            recentPhotos = CameraInterfacePreview.recentPhotos
             return
         }
         #endif
@@ -412,9 +417,8 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             DispatchQueue.main.async { self.busy = false; self.message = "The capture was incomplete. Please try again." }
             return
         }
-        let previews = photos.compactMap { data in
-            UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 1600, height: 1600))
-        }
+        let captureDate = Date()
+        let capturedPhotos = photos.compactMap { CapturedPhoto(data: $0, createdAt: captureDate) }
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
                 DispatchQueue.main.async { self.busy = false; self.message = "Allow Photos access in Settings to save your photos." }
@@ -429,7 +433,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                 DispatchQueue.main.async {
                     self.busy = false
                     if success {
-                        self.recentPhotos = previews
+                        self.recentPhotos = capturedPhotos
                         self.lastCapture = photos.count == 1 ? "Saved photo" : "Saved \(photos.count) exposures"
                     }
                     else { self.message = "Could not save photos: \(error?.localizedDescription ?? "Unknown error")" }
