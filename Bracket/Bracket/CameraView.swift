@@ -26,6 +26,7 @@ struct CameraView: View {
     @State private var timerSeconds = 0
     @State private var countdown: Int?
     @State private var timerTask: Task<Void, Never>?
+    @AppStorage("camera.level") private var showLevel = true
 
     var body: some View {
         GeometryReader { geometry in
@@ -50,6 +51,7 @@ struct CameraView: View {
         .background { Color.black.ignoresSafeArea() }
         .preferredColorScheme(.dark)
         .statusBarHidden()
+        .persistentSystemOverlays(.hidden)
         .onAppear {
             camera.start()
             #if DEBUG
@@ -178,6 +180,8 @@ struct CameraView: View {
                 if camera.showGrid {
                     GridOverlay().stroke(.white.opacity(0.35), lineWidth: 0.5).allowsHitTesting(false)
                 }
+                CameraLevelOverlay(enabled: showLevel && camera.ready && selectedPanel == nil && countdown == nil,
+                                   preview: camera.isInterfacePreview)
                 if let focusPoint {
                     focusIndicator(at: focusPoint, in: geometry.size)
                 }
@@ -392,7 +396,10 @@ struct CameraView: View {
             case .exposure: exposureSettings
             case .timer: timerSettings
             case .grid:
-                Toggle("Grid", isOn: $camera.showGrid).tint(cameraYellow).padding(.horizontal, 20)
+                VStack(spacing: 16) {
+                    Toggle("Grid", isOn: $camera.showGrid)
+                    Toggle("Level", isOn: $showLevel)
+                }.tint(cameraYellow).padding(.horizontal, 20)
             case nil: EmptyView()
             }
         }

@@ -17,7 +17,7 @@ struct ZoomWheel: View {
                 let radius = size.width * 0.6
                 let center = CGPoint(x: size.width / 2, y: radius + 12)
                 let circle = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-                context.fill(Path(ellipseIn: circle), with: .color(.black.opacity(0.65)))
+                context.fill(Path(ellipseIn: circle), with: .color(.black.opacity(0.45)))
                 let first = Int(ceil(log2(Double(limits.lowerBound)) * 18))
                 let last = Int(floor(log2(Double(limits.upperBound)) * 18))
                 if first <= last {
@@ -30,13 +30,13 @@ struct ZoomWheel: View {
                     let angle = angle(for: value)
                     guard abs(angle) < .pi / 2 else { continue }
                     tick(value, radius: radius, center: center, length: 26, context: &context)
-                    if abs(angle) > 0.14 {
+                    if abs(angle) > 0.06 {
                         var labelContext = context
-                        labelContext.translateBy(x: center.x + CGFloat(sin(angle)) * (radius - 46), y: center.y - CGFloat(cos(angle)) * (radius - 46))
+                        labelContext.translateBy(x: center.x + CGFloat(sin(angle)) * (radius - 36), y: center.y - CGFloat(cos(angle)) * (radius - 36))
                         labelContext.rotate(by: .radians(angle))
-                        labelContext.draw(Text(label(value)).font(.system(size: 16)).foregroundColor(.white), at: .zero)
+                        labelContext.draw(Text(label(value)).font(.system(size: 14)).foregroundColor(.white), at: .zero)
                         if abs(value - 1) < 0.01, let mainFocalLength {
-                            labelContext.draw(Text("\(mainFocalLength) MM").font(.system(size: 10)).foregroundColor(.white.opacity(0.5)), at: CGPoint(x: 0, y: 21))
+                            labelContext.draw(Text("\(mainFocalLength) MM").font(.system(size: 10)).foregroundColor(.white.opacity(0.5)), at: CGPoint(x: 0, y: 16))
                         }
                     }
                 }
@@ -51,9 +51,9 @@ struct ZoomWheel: View {
                 @unknown default: break
                 }
             }
-            VStack(spacing: 20) {
-                Image(systemName: "arrowtriangle.down.fill").font(.system(size: 11))
-                Text("\(label(zoom))×").font(.system(size: 19, weight: .medium)).monospacedDigit()
+            VStack(spacing: 14) {
+                Image(systemName: "arrowtriangle.down.fill").font(.system(size: 8))
+                Text("\(label(zoom))×").font(.system(size: 16, weight: .medium)).monospacedDigit()
             }
             .foregroundStyle(yellow)
             .padding(.top, 12)
