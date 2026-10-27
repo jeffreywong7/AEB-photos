@@ -1,13 +1,20 @@
 import SwiftUI
 import AVFoundation
 
-private let cameraYellow = Color(red: 1, green: 0.83, blue: 0)
+private let cameraYellow = Color(uiColor: .systemYellow)
 
 struct CameraView: View {
     @StateObject private var camera = CameraModel()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.openURL) private var openURL
-    @State private var controlsExpanded = false
+    private enum CameraPanel: String, CaseIterable {
+        case bracketing = "AEB"
+        case exposure = "Exposure"
+        case timer = "Timer"
+        case grid = "Grid"
+    }
+
+    @State private var selectedPanel: CameraPanel?
     @State private var reviewingPhotos = false
     @State private var focusPoint: CGPoint?
     @State private var focusTask: Task<Void, Never>?
@@ -16,30 +23,48 @@ struct CameraView: View {
     @State private var showingZoomWheel = false
     @State private var mainLensMM: Int?
     @State private var wheelStartZoom: CGFloat?
+    @State private var timerSeconds = 0
+    @State private var countdown: Int?
+    @State private var timerTask: Task<Void, Never>?
 
     var body: some View {
         GeometryReader { geometry in
-            let previewHeight = geometry.size.width * 4 / 3
-            let compact = geometry.size.height < previewHeight + 224
-            VStack(spacing: 0) {
-                if !compact {
-                    toolbar.frame(height: 52)
-                    Spacer(minLength: 0)
-                }
-                viewfinder.frame(width: geometry.size.width, height: previewHeight)
-                Spacer(minLength: 0)
-                bottomControls.frame(height: compact ? max(116, geometry.size.height - previewHeight) : 172)
+            let top = geometry.safeAreaInsets.top
+            let bottom = geometry.safeAreaInsets.bottom
+            let size = CGSize(width: geometry.size.width, height: geometry.size.height + top + bottom)
+            let layout = CameraLayout(size: size, safeTop: top, safeBottom: bottom)
+            ZStack {
+                Color.black
+                viewfinder
+                    .frame(width: layout.previewFrame.width, height: layout.previewFrame.height)
+                    .position(x: layout.previewFrame.midX, y: layout.previewFrame.midY)
+                toolbar.position(layout.toolbarCenter)
+                ZStack {
+                    shutterRow.position(layout.shutterCenter)
+                    footerRow.position(layout.footerCenter)
+                }.cameraGlassGroup()
             }
-            .overlay(alignment: .top) {
-                if compact { toolbar.background(.black.opacity(0.25)) }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.black)
+            .frame(width: size.width, height: size.height)
+            .offset(y: -top)
         }
-        .background(.black)
+        .background(.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
         .statusBarHidden()
-        .onAppear { camera.start() }
+        .onAppear {
+            camera.start()
+            #if DEBUG
+            if camera.isInterfacePreview {
+                switch CameraInterfacePreview.state {
+                case "aeb": selectedPanel = .bracketing
+                case "wheel": showingZoomWheel = true; camera.setZoom(0.7)
+                case "focal": mainLensMM = 35; camera.setZoom(CGFloat(35) / 24)
+                case "timer": selectedPanel = .timer; timerSeconds = 3
+                default: break
+                }
+            }
+            #endif
+        }
+        .cameraSnapshotPreview()
         .task(id: camera.lastCapture) {
             guard camera.lastCapture != nil else { return }
             try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -51,11 +76,11 @@ struct CameraView: View {
             if let mm = mainLensMM, abs(zoom - CGFloat(mm) / 24) > 0.01 { mainLensMM = nil }
         }
         .onChange(of: camera.ready) { ready in
-            if !ready { showingZoomWheel = false; mainLensMM = nil }
+            if !ready { showingZoomWheel = false; mainLensMM = nil; cancelCountdown() }
         }
         .onChange(of: scenePhase) { _ in updateCameraActivity() }
         .onChange(of: reviewingPhotos) { _ in updateCameraActivity() }
-        .onDisappear { focusTask?.cancel(); camera.stop() }
+        .onDisappear { focusTask?.cancel(); cancelCountdown(); camera.stop() }
         .fullScreenCover(isPresented: $reviewingPhotos) { photoReview }
         .alert("Camera", isPresented: Binding(get: { camera.message != nil }, set: { if !$0 { camera.message = nil } })) {
             Button("OK", role: .cancel) { camera.message = nil }
@@ -63,36 +88,26 @@ struct CameraView: View {
     }
 
     private var toolbar: some View {
-        HStack {
+        HStack(spacing: 0) {
             flashControl
-            Spacer()
-            Button {
-                withAnimation(.easeInOut(duration: 0.22)) { controlsExpanded.toggle() }
-            } label: {
-                Image(systemName: controlsExpanded ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 32, height: 32)
-                    .background(.white.opacity(0.12), in: Circle())
-                    .frame(width: 44, height: 44)
+            Image(systemName: "livephoto.slash")
+                .font(.system(size: 21, weight: .regular))
+                .foregroundStyle(.white)
+                .frame(width: 44, height: 44)
+                .accessibilityLabel("Live Photos off")
+            Button { togglePanel(.exposure) } label: {
+                VStack(spacing: -1) {
+                    Text(String(format: "%.1f", camera.center)).font(.system(size: 15, weight: .regular)).monospacedDigit()
+                    Text("EV").font(.system(size: 9, weight: .medium))
+                }
+                .foregroundStyle(camera.center == 0 ? .white : cameraYellow)
+                .frame(width: 44, height: 44)
             }
-            .accessibilityLabel(controlsExpanded ? "Hide camera controls" : "Show camera controls")
-            .accessibilityValue(controlsExpanded ? "Expanded" : "Collapsed")
-            Spacer()
-            Button {
-                withAnimation(.easeInOut(duration: 0.22)) { controlsExpanded.toggle() }
-            } label: {
-                Text("AEB")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(camera.aebEnabled ? cameraYellow : .white.opacity(0.6))
-                    .padding(.horizontal, 7).padding(.vertical, 5)
-                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(camera.aebEnabled ? cameraYellow : .white.opacity(0.6), lineWidth: 1))
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Auto exposure bracketing settings")
-            .accessibilityValue(camera.aebEnabled ? "On" : "Off")
+            .accessibilityLabel("Exposure adjustment")
+            .accessibilityValue("\(ev(camera.center)) EV")
         }
-        .foregroundStyle(.white)
-        .padding(.horizontal, 16)
+        .fixedSize()
+        .disabled(camera.busy || countdown != nil)
     }
 
     private var flashControl: some View {
@@ -125,13 +140,26 @@ struct CameraView: View {
         .accessibilityValue(camera.aebEnabled ? "Off during AEB" : camera.flashMode == .auto ? "Auto" : camera.flashMode == .on ? "On" : "Off")
     }
 
+    private var cameraPreview: some View {
+        CameraPreview(session: camera.session) { point, devicePoint in
+            guard camera.ready, !camera.busy, countdown == nil else { return }
+            if selectedPanel != nil { selectedPanel = nil; return }
+            if showingZoomWheel { showingZoomWheel = false; return }
+            camera.focus(at: devicePoint)
+            displayFocus(at: point)
+        }
+    }
+
     private var viewfinder: some View {
         GeometryReader { geometry in
             ZStack {
-                CameraPreview(session: camera.session) { point, devicePoint in
-                    guard camera.ready, !camera.busy else { return }
-                    camera.focus(at: devicePoint)
-                    displayFocus(at: point)
+                Group {
+                    #if DEBUG
+                    if camera.isInterfacePreview { CameraPreviewScene() }
+                    else { cameraPreview }
+                    #else
+                    cameraPreview
+                    #endif
                 }
                 .simultaneousGesture(MagnificationGesture()
                     .onChanged { value in
@@ -142,7 +170,10 @@ struct CameraView: View {
                 .simultaneousGesture(DragGesture(minimumDistance: 35)
                     .onEnded { value in
                         guard abs(value.translation.height) > abs(value.translation.width) else { return }
-                        withAnimation(.easeInOut(duration: 0.22)) { controlsExpanded = value.translation.height < 0 }
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            selectedPanel = value.translation.height < 0 ? .bracketing : nil
+                            showingZoomWheel = false
+                        }
                     })
                 if camera.showGrid {
                     GridOverlay().stroke(.white.opacity(0.35), lineWidth: 0.5).allowsHitTesting(false)
@@ -151,6 +182,13 @@ struct CameraView: View {
                     focusIndicator(at: focusPoint, in: geometry.size)
                 }
                 if !camera.ready { cameraStatus }
+                if let countdown {
+                    Text("\(countdown)")
+                        .font(.system(size: 80, weight: .thin))
+                        .foregroundStyle(.white)
+                        .shadow(radius: 8)
+                        .accessibilityLabel("Taking photo in \(countdown) seconds")
+                }
                 VStack {
                     if let status = camera.lastCapture {
                         Text(status)
@@ -161,8 +199,8 @@ struct CameraView: View {
                             .accessibilityAddTraits(.updatesFrequently)
                     }
                     Spacer()
-                    if controlsExpanded {
-                        aebControls.transition(.move(edge: .bottom).combined(with: .opacity))
+                    if selectedPanel != nil {
+                        cameraControls.transition(.move(edge: .bottom).combined(with: .opacity))
                     } else {
                         zoomInterface
                     }
@@ -277,7 +315,7 @@ struct CameraView: View {
                 zoomControls.padding(.bottom, 18)
             }
         }
-        .frame(height: showingZoomWheel ? 150 : 66)
+        .frame(height: showingZoomWheel ? 134 : 66)
         .contentShape(Rectangle())
         .simultaneousGesture(DragGesture(minimumDistance: 8, coordinateSpace: .global)
             .onChanged { value in
@@ -291,7 +329,9 @@ struct CameraView: View {
     }
 
     private var zoomControls: some View {
-        HStack(spacing: 8) {
+        let mainIndex = camera.zoomPresets.firstIndex(of: 1) ?? 0
+        let offset = (CGFloat(camera.zoomPresets.count - 1) / 2 - CGFloat(mainIndex)) * 40
+        return HStack(spacing: 0) {
             ForEach(camera.zoomPresets, id: \.self) { value in
                 Button {
                     guard !showingZoomWheel else { return }
@@ -328,8 +368,63 @@ struct CameraView: View {
                 .disabled(!camera.ready || camera.busy)
             }
         }
-        .padding(4)
-        .background(.black.opacity(0.25), in: Capsule())
+        .offset(x: offset)
+    }
+
+    private var cameraControls: some View {
+        VStack(spacing: 16) {
+            HStack {
+                ForEach(CameraPanel.allCases, id: \.self) { panel in
+                    Button { selectedPanel = panel } label: {
+                        Text(panel.rawValue)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(selectedPanel == panel ? cameraYellow : .white.opacity(0.7))
+                            .frame(maxWidth: .infinity, minHeight: 36)
+                    }
+                    .accessibilityAddTraits(selectedPanel == panel ? .isSelected : [])
+                }
+                Button { selectedPanel = nil } label: {
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold)).frame(width: 36, height: 36)
+                }.accessibilityLabel("Close camera controls")
+            }
+            switch selectedPanel {
+            case .bracketing: aebControls
+            case .exposure: exposureSettings
+            case .timer: timerSettings
+            case .grid:
+                Toggle("Grid", isOn: $camera.showGrid).tint(cameraYellow).padding(.horizontal, 20)
+            case nil: EmptyView()
+            }
+        }
+        .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 20)
+        .foregroundStyle(.white)
+        .background(.ultraThinMaterial)
+        .disabled(camera.busy || countdown != nil)
+    }
+
+    private var exposureSettings: some View {
+        HStack(spacing: 16) {
+            Image(systemName: "plusminus.circle").font(.system(size: 20))
+            Slider(value: $camera.center, in: -2...2, step: 0.5).tint(cameraYellow)
+                .accessibilityLabel("Center exposure")
+            Text(ev(camera.center)).monospacedDigit().frame(width: 42)
+        }.padding(.horizontal, 20)
+    }
+
+    private var timerSettings: some View {
+        HStack(spacing: 12) {
+            ForEach([0, 3, 5, 10], id: \.self) { seconds in
+                Button { timerSeconds = seconds } label: {
+                    Text(seconds == 0 ? "Off" : "\(seconds)s")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(timerSeconds == seconds ? .black : .white)
+                        .frame(maxWidth: .infinity, minHeight: 40)
+                        .background(timerSeconds == seconds ? cameraYellow : .white.opacity(0.1), in: Capsule())
+                }
+                .accessibilityLabel(seconds == 0 ? "Timer off" : "\(seconds) second timer")
+                .accessibilityAddTraits(timerSeconds == seconds ? .isSelected : [])
+            }
+        }.padding(.horizontal, 12)
     }
 
     private var aebControls: some View {
@@ -384,58 +479,130 @@ struct CameraView: View {
                 Text(reason).font(.system(size: 12)).foregroundStyle(cameraYellow).multilineTextAlignment(.center)
             }
         }
-        .padding(.horizontal, 20).padding(.bottom, 20)
-        .background(.black.opacity(0.85))
+        .padding(.horizontal, 12)
         .disabled(camera.busy)
     }
 
-    private var bottomControls: some View {
-        VStack(spacing: 12) {
-            Text("PHOTO")
-                .font(.system(size: 13, weight: .semibold)).tracking(1)
-                .foregroundStyle(cameraYellow).frame(height: 26)
-            HStack {
-                Button { reviewingPhotos = true } label: {
-                    Group {
-                        if let thumbnail = camera.recentPhotos.first {
-                            Image(uiImage: thumbnail).resizable().scaledToFill()
-                        } else {
-                            RoundedRectangle(cornerRadius: 5).fill(.white.opacity(0.12))
-                                .overlay(Image(systemName: "photo").foregroundStyle(.white.opacity(0.45)))
+    private var shutterRow: some View {
+        HStack {
+            Button { togglePanel(.bracketing) } label: {
+                Text("AEB")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(camera.aebEnabled ? cameraYellow : .white)
+                    .frame(width: 48, height: 48)
+                    .cameraGlass(in: Circle())
+            }
+            .accessibilityLabel("Auto exposure bracketing settings")
+            .accessibilityValue(camera.aebEnabled ? "On" : "Off")
+            .disabled(camera.busy || countdown != nil)
+            Spacer()
+            Button(action: pressShutter) {
+                ZStack {
+                    Circle().fill(Color(white: 0.11)).frame(width: 82, height: 82)
+                    Circle().stroke(.white.opacity(0.25), lineWidth: 1).frame(width: 80, height: 80)
+                    Circle().fill(.white).frame(width: 70, height: 70)
+                    if countdown != nil {
+                        Image(systemName: "xmark").font(.system(size: 20, weight: .medium)).foregroundStyle(.black)
+                    } else if camera.busy {
+                        ProgressView().tint(.black)
+                    }
+                }.opacity(camera.canCapture || camera.busy || countdown != nil ? 1 : 0.45)
+            }
+            .buttonStyle(ShutterButtonStyle())
+            .disabled(!camera.canCapture && countdown == nil)
+            .accessibilityIdentifier("camera.shutter")
+            .accessibilityLabel(countdown != nil ? "Cancel timer" : camera.aebEnabled ? "Take exposure bracket" : "Take photo")
+            .accessibilityValue(camera.busy ? "Saving photos" : camera.aebEnabled ? "\(camera.count) photos" : "Single photo")
+            Spacer()
+            Button { togglePanel(selectedPanel ?? .bracketing) } label: {
+                VStack(spacing: 3) {
+                    ForEach(0..<2, id: \.self) { _ in
+                        HStack(spacing: 3) {
+                            ForEach(0..<3, id: \.self) { _ in Circle().frame(width: 4.5, height: 4.5) }
                         }
                     }
-                    .frame(width: 48, height: 48).clipShape(RoundedRectangle(cornerRadius: 5))
                 }
-                .disabled(camera.recentPhotos.isEmpty)
-                .accessibilityLabel("Review last capture")
-                Spacer()
-                Button { showingZoomWheel = false; camera.capture() } label: {
-                    ZStack {
-                        Circle().stroke(.white, lineWidth: 4).frame(width: 78, height: 78)
-                        Circle().fill(.white).frame(width: 66, height: 66)
-                        if camera.busy { ProgressView().tint(.black) }
-                    }.opacity(camera.canCapture || camera.busy ? 1 : 0.45)
-                }
-                .buttonStyle(ShutterButtonStyle())
-                .disabled(!camera.canCapture)
-                .accessibilityLabel(camera.aebEnabled ? "Take exposure bracket" : "Take photo")
-                .accessibilityValue(camera.busy ? "Saving photos" : camera.aebEnabled ? "\(camera.count) photos, \(camera.spacing) EV spacing" : "Single photo")
-                Spacer()
-                Button { camera.switchCamera() } label: {
-                    Image(systemName: "arrow.triangle.2.circlepath.camera")
-                        .font(.system(size: 25, weight: .medium))
-                        .foregroundStyle(.white)
-                        .frame(width: 48, height: 48)
-                        .background(.white.opacity(0.12), in: Circle())
-                }
-                .disabled(!camera.ready || camera.busy)
-                .accessibilityLabel("Switch camera")
-            }.padding(.horizontal, 30)
-            if !controlsExpanded, let reason = camera.captureUnavailableReason {
-                Text(reason).font(.system(size: 11)).foregroundStyle(cameraYellow).multilineTextAlignment(.center)
+                .foregroundStyle(selectedPanel == nil ? .white : cameraYellow)
+                .frame(width: 48, height: 48)
+                .cameraGlass(in: Circle())
             }
+            .accessibilityLabel(selectedPanel == nil ? "Show camera controls" : "Hide camera controls")
+            .disabled(camera.busy || countdown != nil)
         }
-        .frame(maxHeight: .infinity, alignment: .top)
+        .padding(.horizontal, 34)
+        .frame(height: 82)
+    }
+
+    private var footerRow: some View {
+        HStack {
+            Button { reviewingPhotos = true } label: {
+                Group {
+                    if let thumbnail = camera.recentPhotos.first {
+                        Image(uiImage: thumbnail).resizable().scaledToFill()
+                    } else {
+                        Circle().fill(Color(white: 0.13))
+                            .overlay(Image(systemName: "photo").font(.system(size: 19)).foregroundStyle(.white.opacity(0.5)))
+                    }
+                }
+                .frame(width: 48, height: 48).clipShape(Circle())
+            }
+            .disabled(camera.recentPhotos.isEmpty || camera.busy || countdown != nil)
+            .accessibilityLabel("Review last capture")
+            Spacer()
+            Text("PHOTO")
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(cameraYellow)
+                .frame(width: 92, height: 44)
+                .cameraGlass(in: Capsule())
+                .accessibilityAddTraits(.isSelected)
+            Spacer()
+            Button { camera.switchCamera() } label: {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 23, weight: .regular))
+                    .foregroundStyle(.white)
+                    .frame(width: 48, height: 48)
+                    .cameraGlass(in: Circle())
+            }
+            .disabled(!camera.ready || camera.busy || countdown != nil)
+            .accessibilityLabel("Switch camera")
+        }
+        .padding(.horizontal, 34)
+        .frame(height: 48)
+    }
+
+    private func togglePanel(_ panel: CameraPanel) {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            selectedPanel = selectedPanel == panel ? nil : panel
+            showingZoomWheel = false
+        }
+    }
+
+    private func pressShutter() {
+        if countdown != nil { cancelCountdown(); return }
+        guard camera.canCapture else { return }
+        selectedPanel = nil
+        showingZoomWheel = false
+        guard timerSeconds > 0 else { camera.capture(); return }
+        countdown = timerSeconds
+        timerTask = Task { @MainActor in
+            do {
+                for remaining in stride(from: timerSeconds, through: 1, by: -1) {
+                    countdown = remaining
+                    try await Task.sleep(nanoseconds: 1_000_000_000)
+                }
+                guard !Task.isCancelled else { return }
+                countdown = nil
+                timerTask = nil
+                guard camera.canCapture, scenePhase == .active else { return }
+                camera.capture()
+            } catch { return }
+        }
+    }
+
+    private func cancelCountdown() {
+        timerTask?.cancel()
+        timerTask = nil
+        countdown = nil
     }
 
     private var photoReview: some View {
@@ -474,6 +641,7 @@ struct CameraView: View {
     }
 
     private func updateCameraActivity() {
+        if scenePhase != .active { cancelCountdown() }
         if reviewingPhotos || scenePhase == .background { camera.stop() }
         else if scenePhase == .active { camera.start() }
     }

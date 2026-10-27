@@ -8,13 +8,13 @@ struct ZoomWheel: View {
     let onZoom: (CGFloat) -> Void
     let onClose: () -> Void
 
-    private let yellow = Color(red: 1, green: 0.83, blue: 0)
+    private let yellow = Color(uiColor: .systemYellow)
 
     var body: some View {
         ZStack(alignment: .top) {
             Canvas { drawingContext, size in
                 var context = drawingContext
-                let radius = size.width * 0.72
+                let radius = size.width * 0.6
                 let center = CGPoint(x: size.width / 2, y: radius + 12)
                 let circle = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
                 context.fill(Path(ellipseIn: circle), with: .color(.black.opacity(0.65)))
@@ -42,6 +42,7 @@ struct ZoomWheel: View {
                 }
             }
             .accessibilityLabel("Zoom wheel")
+            .accessibilityAction(named: "Close zoom wheel", onClose)
             .accessibilityValue("\(label(zoom)) times")
             .accessibilityAdjustableAction { direction in
                 switch direction {
@@ -57,22 +58,14 @@ struct ZoomWheel: View {
             .foregroundStyle(yellow)
             .padding(.top, 12)
             .allowsHitTesting(false)
-            Button(action: onClose) {
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(.black.opacity(0.5), in: Circle())
-            }
-            .accessibilityLabel("Close zoom wheel")
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-            .padding(12)
+            .accessibilityHidden(true)
+
         }
         .clipped()
     }
 
     private func angle(for value: CGFloat) -> Double {
-        log2(Double(value / zoom)) * .pi / 5
+        log2(Double(value / zoom)) * .pi / 12
     }
 
     private func tick(_ value: CGFloat, radius: CGFloat, center: CGPoint, length: CGFloat, context: inout GraphicsContext) {

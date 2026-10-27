@@ -4,13 +4,15 @@ on:
   pull_request:
     paths:
       - 'Bracket/**'
-      - 'scripts/verify-ios.sh'
+      - 'scripts/**'
+      - 'tests/**'
       - '.github/workflows/ios-build.yml'
   push:
     branches: [main]
     paths:
       - 'Bracket/**'
-      - 'scripts/verify-ios.sh'
+      - 'scripts/**'
+      - 'tests/**'
       - '.github/workflows/ios-build.yml'
   workflow_dispatch:
 
@@ -19,9 +21,17 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Build for iOS Simulator
         run: scripts/verify-ios.sh
+      - name: Capture camera UI on iPhone 15 Pro Simulator
+        run: scripts/capture-camera-ui.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: camera-ui-preview
+          path: .build/camera-ui/*.png
+          if-no-files-found: warn

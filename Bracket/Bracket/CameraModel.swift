@@ -47,10 +47,32 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     @Published private(set) var zoomPresets: [CGFloat] = [1]
     @Published private(set) var rearCamera = true
 
+    var isInterfacePreview: Bool {
+        #if DEBUG
+        CameraInterfacePreview.enabled
+        #else
+        false
+        #endif
+    }
+
     var ready: Bool { sessionRunning && !interrupted && !switchingCamera }
 
     override init() {
         super.init()
+        #if DEBUG
+        if CameraInterfacePreview.enabled {
+            sessionRunning = true
+            maxCount = 5
+            minBias = -4
+            maxBias = 4
+            minZoom = 0.5
+            maxZoom = 15
+            zoomPresets = [0.5, 1, 2, 3]
+            supportedFlashModes = [.off, .auto, .on]
+            showGrid = true
+            return
+        }
+        #endif
         runningObservation = session.observe(\.isRunning, options: [.initial, .new]) { [weak self] _, _ in
             self?.refreshSessionState()
         }
@@ -104,6 +126,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func start() {
+        guard !isInterfacePreview else { return }
         logger.info("Camera start requested")
         queue.async { self.shouldRun = true }
         unavailability = nil
@@ -119,6 +142,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func stop() {
+        guard !isInterfacePreview else { return }
         logger.info("Camera stop requested")
         queue.async {
             self.shouldRun = false
@@ -256,6 +280,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func switchCamera() {
+        guard !isInterfacePreview else { return }
         guard ready, !busy else { return }
         switchingCamera = true
         queue.async {
@@ -291,6 +316,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
         guard ready, !busy else { return }
         let target = min(max(value, minZoom), maxZoom)
         zoom = target
+        guard !isInterfacePreview else { return }
         queue.async {
             guard let camera = self.device else { return }
             do {
@@ -340,6 +366,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func capture() {
+        guard !isInterfacePreview else { return }
         guard canCapture else { return }
         busy = true
         lastCapture = nil

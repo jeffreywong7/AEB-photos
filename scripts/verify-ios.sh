@@ -5,10 +5,15 @@ if ! command -v xcodebuild >/dev/null 2>&1; then
     echo "iOS verification requires macOS with Xcode installed." >&2
     exit 1
 fi
+build_dir="${BRACKET_BUILD_DIR:-$PWD/.build/ios}"
+mkdir -p "$build_dir"
+xcrun swiftc Bracket/Bracket/CameraLayout.swift tests/CameraLayout/main.swift -o "$build_dir/check-camera-layout"
+"$build_dir/check-camera-layout"
 xcodebuild \
     -project Bracket/Bracket.xcodeproj \
     -scheme Bracket \
     -configuration Debug \
+    -derivedDataPath "$build_dir" \
     -sdk iphonesimulator \
     -destination 'generic/platform=iOS Simulator' \
     CODE_SIGNING_ALLOWED=NO \
