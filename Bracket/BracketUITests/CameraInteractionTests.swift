@@ -204,12 +204,21 @@ final class CameraInteractionTests: XCTestCase {
         app.buttons["Browse photo library"].tap()
         let cancel = app.buttons["Cancel"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
-        let photo = app.cells.firstMatch
+        let pickerScreenshot = XCTAttachment(screenshot: app.screenshot())
+        pickerScreenshot.name = "System photo library"
+        pickerScreenshot.lifetime = .keepAlways
+        add(pickerScreenshot)
+        let pickerHierarchy = XCTAttachment(string: app.debugDescription)
+        pickerHierarchy.name = "System photo library accessibility"
+        pickerHierarchy.lifetime = .keepAlways
+        add(pickerHierarchy)
+        let photo = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Photo,' OR label BEGINSWITH 'Screenshot,'")).firstMatch
         XCTAssertTrue(photo.waitForExistence(timeout: 10))
         photo.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: cancel)], timeout: 10), .completed)
         app.buttons["Photo information"].tap()
         XCTAssertTrue(app.staticTexts["Format, PNG"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Dimensions, 1179 × 2556"].exists)
     }
 
     func testEmptyCaptureReviewCanCancelLibraryAndReturnToCamera() {

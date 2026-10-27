@@ -4,7 +4,7 @@ The target is a photo-only camera as close as possible to the native iPhone 15 P
 
 ## Current evidence
 
-The native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, screenshot export, and all twelve UI interaction cases pass at `d057840`. The photo, square, wide, and locked-camera simulator screenshots were inspected. The next run adds recent-capture persistence and system photo-library interactions. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40483180219).
+At `51cb15f`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, storage checks, and fourteen of fifteen UI interactions pass. Relaunch recovery and empty-library cancellation pass. The remaining test selected a bundled simulator HEIF photo through the underlying review cell while expecting the added PNG. The exported image and info sheet show the HEIF representation and dimensions correctly. The next run selects the picker's photo/screenshot accessibility element explicitly and checks the seeded PNG's format and dimensions. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40485232175).
 
 | Area | Implemented | Verified | Still required |
 | --- | --- | --- | --- |
@@ -16,7 +16,7 @@ The native Debug and Release builds, layout/level checks, ImageIO crop/orientati
 | Aspect | 4:3, 1:1, and 16:9 framing with matching JPEG center crops | Touch capture produces square/wide dimensions; ImageIO checks preserve orientation and ISO; uncropped data is unchanged | Real-camera framing comparison |
 | Timer | Off/3/5/10-second options and cancellation | Cancel/restart and background cancellation pass touch tests | Actual delayed capture on iPhone |
 | Hardware shutter | Supported iOS 18+ capture-event API routed through the shutter action | Native compilation | Volume-button delivery and timer cancellation on iPhone |
-| Photo review | Paging, thumbnails, pinch/double-tap zoom, drag dismissal, sharing/information; retain the latest bracket across launches; open the system photo library | Zoom, navigation, dismissal, and dimensions pass; persistence and picker tests pending | Verify sharing and iCloud loading on iPhone |
+| Photo review | Paging, thumbnails, pinch/double-tap zoom, drag dismissal, sharing/information; retain the latest bracket across launches; open the system photo library | Zoom, navigation, dimensions, relaunch recovery, empty-library cancellation, and stored bytes/timestamps pass; selected library HEIF rendered correctly; PNG selection query rerun pending | Verify sharing and iCloud loading on iPhone |
 | Startup and permissions | Start on appearance, observe actual session state, preserve temporary inactivity, Settings/retry actions | Native compilation; UI fixture launches successfully | Cold launch, permission approval/denial, interruption, and real-session resume |
 
 ## Remaining differences
@@ -42,4 +42,4 @@ Touch and hold meters the selected point once, then displays AE/AF LOCK after ob
 
 ## Photo-review follow-up
 
-The latest saved bracket is retained in one atomically replaced binary property list in Application Support, excluded from backup. Loading and writing run off the main thread; a failed local copy does not undo a successful Photos save. The thumbnail and full-resolution review can return after relaunch. The system photo picker provides photo-only library browsing, including an empty-capture flow. The selected representation is reviewed and shared without re-encoding, with its actual file type and orientation-aware dimensions. The next CI run exercises relaunch, library PNG selection, and picker cancellation and checks stored bytes/timestamps independently.
+The latest saved bracket is retained in one atomically replaced binary property list in Application Support, excluded from backup. Loading and writing run off the main thread; a failed local copy does not undo a successful Photos save. The thumbnail and full-resolution review return after relaunch in the touch test. The system photo picker provides photo-only library browsing, including an empty-capture flow. The selected representation is reviewed and shared without re-encoding, with its actual file type and orientation-aware dimensions. Stored bytes/timestamps and picker cancellation pass; the PNG selection query is being rerun.
