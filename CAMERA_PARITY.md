@@ -1,39 +1,33 @@
 # Camera parity status
 
-The goal remains a photo-only app that looks and behaves identically to the built-in iPhone Camera, with AEB settings. The current implementation is incomplete. Source parsing does not prove that the app builds, runs, or matches Camera.
+The target is a photo-only camera as close as possible to the native iPhone 15 Pro Camera, with AEB added. The supplied screenshots and Apple's guides define the reference in [native-camera-reference.md](docs/native-camera-reference.md). The goal is not yet complete.
 
-## Implementation audit
+## Current evidence
 
-| Requirement | Current source | Evidence still needed |
-| --- | --- | --- |
-| Photo-only Camera layout | `CameraLayout` anchors the 4:3 frame, centered toolbar, shutter row, and separate thumbnail/PHOTO/camera-switch row to measurements from the supplied screenshots. iOS 26+ uses system Liquid Glass with an older-system fallback. | Build and compare both apps on the same iPhone and iOS version. Check positions, safe areas, typography, colors, transitions, and shutter feedback. |
-| Accessible AEB controls | The AEB drawer exposes an on/off toggle, frame count, EV spacing, center exposure, and a composition grid. Single-photo capture has Auto/On/Off flash controls where supported. `CameraModel` rejects unsupported frame counts and exposure biases. | Capture complete brackets at valid ranges. Check unavailable frame counts, invalid ranges, and the saved exposures in Photos. |
-| Native lens controls | Rear-camera discovery prefers combined cameras. The zoom stops use device switch-over factors. A curved zoom wheel supports dragging and accessibility adjustments, and tapping the selected main-camera stop cycles through 24, 28, and 35 mm crops for the reference iPhone 15 Pro. An AEB-incompatible combined camera falls back to the wide camera. | Check actual lens selection, field of view, zoom transitions, and AEB support on each available camera. |
-| Focus and exposure interactions | Tap-to-focus and a draggable exposure sun are implemented. Long-press AE/AF lock is absent. | Implement and exercise AE/AF lock with AEB. Confirm the preview and bracket center describe the same exposure. |
-| Native photo review | Recent-capture review supports paging, pinch/double-tap zoom, drag-down dismissal, a thumbnail strip, original-JPEG sharing, and original-image information. The center exposure is used as the AEB cover. | Verify review gestures and sharing on iPhone. Full photo-library browsing remains outside the current recent-capture viewer. |
-| Other still-photo controls | A cancellable 3/5/10-second timer and motion-driven horizon level are implemented. Hardware capture events use the same shutter action on iOS 18+. Aspect-ratio selection is still absent. | Match the target iPhone's still-photo controls and verify their interaction with AEB. Video and panorama remain outside the requested scope. |
-| Permissions and lifecycle | Camera and add-only Photos permission requests, session stop/restart, and capture/save error messages exist. | Exercise denials, camera interruptions, background/foreground transitions, photo review, and resuming capture. |
+The native Debug and Release builds, layout/level checks, and screenshot export pass at `92a57ec`. The nine-case UI suite has eight passing cases. The only failure searches for a separate dimensions text element, while the exported accessibility hierarchy and screenshot correctly show the combined label `Dimensions, 2400 × 3200`. The next commit corrects that query and reruns the suite. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40454390393).
 
-## Verification available here
+| Area | Implemented | Verified | Still required |
+| --- | --- | --- | --- |
+| Photo layout | Centered toolbar, 4:3 frame, separate shutter/footer rows, circular controls, PHOTO pill, iOS 26+ Liquid Glass | Layout anchors checked; simulator photo, focal, wheel, AEB, timer, and review images inspected | Final comparison on the reference iPhone |
+| Zoom | Device-supported combined-camera stops, curved wheel, 24/28/35 mm main-camera crop cycling | Hold-to-open, preview dismissal, and focal cycling pass touch tests | Physical lens selection, zoom motion, and saved framing |
+| AEB and flash | Frame count, EV spacing, center exposure, supported-range checks; Auto/On/Off flash for single photos | AEB switch changes shutter mode in touch tests; flash code compiles | Capture complete brackets, verify exposure values, test flash output |
+| Composition | Grid and motion-driven horizon level with alignment feedback | Gravity math checked; level rendered in the simulator | Physical tilt direction and haptics |
+| Exposure and focus | Tap-to-focus, exposure sun, exposure controls | Slider direction and toolbar value agree in touch tests | Physical focus and exposure; long-press AE/AF lock is absent |
+| Timer | Off/3/5/10-second options and cancellation | Cancel/restart and background cancellation pass touch tests | Actual delayed capture on iPhone |
+| Hardware shutter | Supported iOS 18+ capture-event API routed through the shutter action | Native compilation | Volume-button delivery and timer cancellation on iPhone |
+| Photo review | Paging, thumbnail strip, pinch/double-tap zoom, drag-down dismissal, original-JPEG sharing and information | Double-tap zoom, back navigation, and drag dismissal pass; original dimensions confirmed in the rendered info sheet | Finish metadata test rerun; verify original sharing on iPhone |
+| Startup and permissions | Start on appearance, observe actual session state, preserve temporary inactivity, Settings/retry actions | Native compilation; UI fixture launches successfully | Cold launch, permission approval/denial, interruption, and real-session resume |
 
-The Swift sources pass a Tree-sitter syntax parse, and `git diff --check` passes. The user installed the initial PR build on an iPhone and supplied a screenshot showing a camera image beneath the incorrect unavailable overlay. The follow-up observes the session's running and interruption states and preserves capture during temporary inactive transitions. The user then reported that cold launch remains on the starting screen until a background/foreground round trip. The next patch starts directly on view appearance, without waiting for a scene-phase transition, and records session startup events through OSLog. These latest changes require device verification.
+## Remaining implementation gaps
 
-The local host is Linux. Neither `swift` nor `xcodebuild` is installed. The GitHub Actions workflow runs `scripts/verify-ios.sh` on macOS to check compilation and measured layout invariants. It also exports five simulator UI snapshots with `scripts/verify-camera-ui.sh`; these use the actual SwiftUI screen with a debug-only camera fixture. The device tool returns `Agent device access is turned off for this environment.` This limitation was rechecked after the implementation passes.
+- Long-press AE/AF lock and its interaction with AEB.
+- Aspect-ratio selection and corresponding saved-image crops.
+- Native photo-library browsing. Review currently contains only the latest capture from the current app session.
 
-## Resume on iOS
+## Device validation
 
-Use a macOS host with Xcode and an accessible iPhone. Record the iPhone model and iOS version as the visual and behavioral reference. First build the existing changes, fix compiler or runtime failures, and compare the camera screens. Then complete the missing interactions above and verify capture/save behavior on the same device.
+The local host has no Xcode or accessible iPhone. CI runs macOS/Xcode builds and simulator tests with the real camera UI and a debug-only neutral fixture. Those tests do not prove physical capture or permission handling.
 
-For the availability fix, check first-launch camera permission approval, opening and dismissing Control Center, returning from the background, camera switching, and returning from photo review. A running, uninterrupted session must show its preview without an unavailable overlay and allow a supported bracket. Denied camera permission must show **Open Settings**. If permission approval arrives after the app enters the background, the session must wait until the app returns to the foreground.
+On the iPhone, check cold launch before backgrounding, first camera permission approval, returning from Control Center, background/foreground transitions, switching cameras, photo review and return, valid and invalid AEB ranges, and Photos permission denial. Check flash with AEB off in bright and dark scenes. Check each available lens, wheel dragging, focal-length cycling, focus/exposure, level/haptics, and timer/volume-button capture. Compare saved images with the preview and confirm every requested exposure appears in Photos.
 
-Check flash with AEB off using Off, On, and Auto in both bright and dark scenes. With AEB on, flash must remain off and each shutter press must save the requested exposure count. Check 0.5×, 1×, 2×, and 3× on the reference iPhone 15 Pro, main-button focal-length cycling, and wheel dragging in both directions. Compare the resulting framing and saved photos with the preview.
-
-The current visual pass follows `docs/native-camera-reference.md`. Check that the shutter and footer rows match the supplied screenshots, that the main zoom stop stays centered, that a tap on the preview dismisses tools, and that timer cancellation does not affect a subsequent countdown. The local source checks do not replace inspecting the exported simulator PNGs.
-
-The native build and measured layout checks passed at `e0a9eb9`. Photo, wheel, and AEB simulator images were downloaded and inspected. That inspection identified near-center labels hidden by the wheel's text exclusion zone and selected-value spacing differences; the next patch corrects those and adds the motion-driven horizon level. These changes require another build and screenshot pass. The level's pure gravity calculations are covered by the layout verification command; physical motion and haptic behavior still need an iPhone.
-
-The native build, layout/level calculations, and simulator export passed at `0d5bb45`; the level and wheel renders were downloaded and inspected. A follow-up adds touch-driven XCTest cases for core camera controls and the supported hardware-shutter API. The UI cases use the real camera screen with a fixture session; they do not prove actual capture, camera permission prompts, or physical volume-button delivery. Those remain device checks.
-
-The first XCTest run at `dcbb4bd` passed focal cycling, wheel dismissal, timer cancellation/restart, and timer cancellation after backgrounding. It found two failures: the composite AEB switch target did not toggle, and the exposure test assumed exact positioning from XCTest's best-effort slider gesture. The follow-up gives the switch its own accessible target, checks the toggle state and shutter mode, and checks semantic EV agreement and direction after dragging. Failure attachments are exported to support direct inspection.
-
-All six camera-control interaction tests passed at `240a012`. The next patch adds recent-photo review gestures, original-data sharing and metadata, and corresponding UI tests and a screenshot state. The app now retains the original JPEG data for the latest capture during the app session. The build command also checks Release, where interface-preview fixtures are excluded.
+The original reference photos remain local and are not included in the repository or CI artifacts.
