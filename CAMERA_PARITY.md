@@ -16,10 +16,12 @@ The goal remains a photo-only app that looks and behaves identically to the buil
 
 ## Verification available here
 
-The Swift sources pass a Tree-sitter syntax parse, and `git diff --check` passes. No iOS compilation or runtime tests have run.
+The Swift sources pass a Tree-sitter syntax parse, and `git diff --check` passes. The user installed the initial PR build on an iPhone and supplied a screenshot showing a camera image beneath the incorrect unavailable overlay. The follow-up fix derives readiness from the session's running and interruption states and preserves capture during temporary inactive transitions. That fix has not yet been built or exercised on iOS.
 
 The host is Linux. Neither `swift` nor `xcodebuild` is installed. The device tool returns `Agent device access is turned off for this environment.` This limitation was rechecked after the implementation passes.
 
 ## Resume on iOS
 
 Use a macOS host with Xcode and an accessible iPhone. Record the iPhone model and iOS version as the visual and behavioral reference. First build the existing changes, fix compiler or runtime failures, and compare the camera screens. Then complete the missing interactions above and verify capture/save behavior on the same device.
+
+For the availability fix, check first-launch camera permission approval, opening and dismissing Control Center, returning from the background, camera switching, and returning from photo review. A running, uninterrupted session must show its preview without an unavailable overlay and allow a supported bracket. Denied camera permission must show **Open Settings**. If permission approval arrives after the app enters the background, the session must wait until the app returns to the foreground.

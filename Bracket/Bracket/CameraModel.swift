@@ -10,8 +10,21 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     private var zoomScale: CGFloat = 1
     private var images: [Data] = []
     private var captureError: String?
+    private var shouldRun = false
+    private var runningObservation: NSKeyValueObservation?
+    private var interruptionObservation: NSKeyValueObservation?
+    private var runtimeErrorObserver: NSObjectProtocol?
 
-    @Published var ready = false
+    enum Unavailability {
+        case permissionDenied
+        case noCamera
+        case failure(String)
+    }
+
+    @Published private(set) var unavailability: Unavailability?
+    @Published private(set) var sessionRunning = false
+    @Published private(set) var interrupted = false
+    @Published private(set) var switchingCamera = false
     @Published var busy = false
     @Published var message: String?
     @Published var maxCount = 0
@@ -27,6 +40,44 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     @Published private(set) var maxZoom: CGFloat = 1
     @Published private(set) var minZoom: CGFloat = 1
     @Published private(set) var zoomPresets: [CGFloat] = [1]
+
+    var ready: Bool { sessionRunning && !interrupted && !switchingCamera }
+
+    override init() {
+        super.init()
+        runningObservation = session.observe(\.isRunning, options: [.initial, .new]) { [weak self] _, _ in
+            self?.refreshSessionState()
+        }
+        interruptionObservation = session.observe(\.isInterrupted, options: [.initial, .new]) { [weak self] _, _ in
+            self?.refreshSessionState()
+        }
+        runtimeErrorObserver = NotificationCenter.default.addObserver(
+            forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil
+        ) { [weak self] notification in
+            let detail = (notification.userInfo?[AVCaptureSessionErrorKey] as? Error)?.localizedDescription
+                ?? "The camera session stopped unexpectedly. Try again."
+            DispatchQueue.main.async { self?.unavailability = .failure(detail) }
+        }
+    }
+
+    deinit {
+        if let runtimeErrorObserver { NotificationCenter.default.removeObserver(runtimeErrorObserver) }
+    }
+
+    private func refreshSessionState() {
+        queue.async {
+            let running = self.session.isRunning
+            let interrupted = self.session.isInterrupted
+            DispatchQueue.main.async {
+                self.sessionRunning = running
+                self.interrupted = interrupted
+                if running && !interrupted {
+                    self.unavailability = nil
+                    self.setExposure(self.center)
+                }
+            }
+        }
+    }
 
     var captureUnavailableReason: String? {
         guard ready else { return nil }
@@ -47,33 +98,36 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     }
 
     func start() {
+        queue.async { self.shouldRun = true }
+        unavailability = nil
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized: configure()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 if granted { self.configure() }
-                else { DispatchQueue.main.async { self.message = "Camera access is needed to take photos. Enable it in Settings." } }
+                else { DispatchQueue.main.async { self.unavailability = .permissionDenied } }
             }
-        default: message = "Camera access is needed to take photos. Enable it in Settings."
+        default: unavailability = .permissionDenied
         }
     }
 
     func stop() {
         queue.async {
+            self.shouldRun = false
             if self.session.isRunning { self.session.stopRunning() }
-            DispatchQueue.main.async { self.ready = false }
         }
     }
 
     private func configure() {
         queue.async {
+            guard self.shouldRun else { return }
             if let camera = self.device {
                 if !self.session.isRunning { self.session.startRunning() }
                 self.publishCapabilities(for: camera)
                 return
             }
             guard let camera = self.preferredCamera(position: .back) else {
-                DispatchQueue.main.async { self.message = "A camera is required. Try this app on an iPhone." }
+                DispatchQueue.main.async { self.unavailability = .noCamera }
                 return
             }
             do {
@@ -82,7 +136,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                 self.session.sessionPreset = .photo
                 guard self.session.canAddInput(input), self.session.canAddOutput(self.output) else {
                     self.session.commitConfiguration()
-                    DispatchQueue.main.async { self.message = "Could not configure the camera." }
+                    DispatchQueue.main.async { self.unavailability = .failure("Could not configure the camera. Try again.") }
                     return
                 }
                 self.session.addInput(input)
@@ -93,7 +147,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                 self.session.startRunning()
                 self.publishCapabilities(for: activeCamera, resetZoom: true)
             } catch {
-                DispatchQueue.main.async { self.message = "Could not start the camera: \(error.localizedDescription)" }
+                DispatchQueue.main.async { self.unavailability = .failure("Could not start the camera: \(error.localizedDescription)") }
             }
         }
     }
@@ -144,6 +198,15 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
         let includesUltraWide = camera.constituentDevices.contains { $0.deviceType == .builtInUltraWideCamera }
         let scale: CGFloat = includesUltraWide ? 1 / (switchovers.first ?? 1) : 1
         zoomScale = scale
+        if resetZoom {
+            do {
+                try camera.lockForConfiguration()
+                camera.videoZoomFactor = min(max(1 / scale, camera.minAvailableVideoZoomFactor), camera.maxAvailableVideoZoomFactor)
+                camera.unlockForConfiguration()
+            } catch {
+                DispatchQueue.main.async { self.message = "Could not reset zoom: \(error.localizedDescription)" }
+            }
+        }
         let minimum = camera.minAvailableVideoZoomFactor * scale
         let zoomLimit = min(camera.maxAvailableVideoZoomFactor * scale, 10)
         let currentZoom = camera.videoZoomFactor * scale
@@ -158,24 +221,27 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             self.zoomPresets = presets
             self.zoom = currentZoom
             if self.count > maximum { self.count = 3 }
-            self.ready = true
-            if resetZoom { self.setZoom(1) }
             self.setExposure(self.center)
         }
     }
 
     func switchCamera() {
         guard ready, !busy else { return }
-        ready = false
+        switchingCamera = true
         queue.async {
-            guard let currentInput = self.session.inputs.first as? AVCaptureDeviceInput else {
-                DispatchQueue.main.async { self.ready = self.session.isRunning }
+            defer {
+                DispatchQueue.main.async {
+                    self.switchingCamera = false
+                    self.setExposure(self.center)
+                }
+            }
+            guard self.shouldRun, let currentInput = self.session.inputs.first as? AVCaptureDeviceInput else {
                 return
             }
             let position: AVCaptureDevice.Position = currentInput.device.position == .back ? .front : .back
             do {
                 guard let camera = self.preferredCamera(position: position) else {
-                    DispatchQueue.main.async { self.ready = true; self.message = "This camera is unavailable." }
+                    DispatchQueue.main.async { self.message = "This camera is unavailable." }
                     return
                 }
                 guard try self.replaceInput(with: camera) else {
@@ -186,7 +252,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                 let activeCamera = self.bracketCompatibleCamera(camera)
                 self.publishCapabilities(for: activeCamera, resetZoom: true)
             } catch {
-                DispatchQueue.main.async { self.ready = true; self.message = "Could not switch cameras: \(error.localizedDescription)" }
+                DispatchQueue.main.async { self.message = "Could not switch cameras: \(error.localizedDescription)" }
             }
         }
     }

@@ -6,6 +6,7 @@ private let cameraYellow = Color(red: 1, green: 0.83, blue: 0)
 struct CameraView: View {
     @StateObject private var camera = CameraModel()
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.openURL) private var openURL
     @State private var controlsExpanded = false
     @State private var reviewingPhotos = false
     @State private var focusPoint: CGPoint?
@@ -112,15 +113,7 @@ struct CameraView: View {
                 if let focusPoint {
                     focusIndicator(at: focusPoint, in: geometry.size)
                 }
-                if !camera.ready {
-                    VStack(spacing: 12) {
-                        Image(systemName: "camera.fill").font(.system(size: 30, weight: .light))
-                        Text("Camera unavailable").font(.system(size: 14))
-                        Text("Allow camera access and use a physical iPhone.")
-                            .font(.system(size: 12)).multilineTextAlignment(.center)
-                    }
-                    .foregroundStyle(.white.opacity(0.6)).padding(24)
-                }
+                if !camera.ready { cameraStatus }
                 VStack {
                     if let status = camera.lastCapture {
                         Text(status)
@@ -142,6 +135,46 @@ struct CameraView: View {
             .background(Color(white: 0.08))
             .clipped()
         }
+    }
+
+    @ViewBuilder
+    private var cameraStatus: some View {
+        if camera.interrupted {
+            statusMessage(title: "Camera interrupted", detail: "The camera will resume when it becomes available.")
+        } else if let reason = camera.unavailability {
+            VStack(spacing: 16) {
+                switch reason {
+                case .permissionDenied:
+                    statusMessage(title: "Camera access disabled", detail: "Allow camera access for Bracket in Settings.")
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                    }
+                case .noCamera:
+                    statusMessage(title: "No camera available", detail: "This device does not have an accessible camera.")
+                case .failure(let detail):
+                    statusMessage(title: "Camera unavailable", detail: detail)
+                    Button("Try Again") { camera.start() }
+                }
+            }
+            .tint(cameraYellow)
+            .padding(20)
+            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
+            .padding(24)
+        } else {
+            ProgressView("Starting camera…")
+                .tint(.white)
+                .foregroundStyle(.white)
+                .padding(20)
+                .background(.black.opacity(0.5), in: RoundedRectangle(cornerRadius: 12))
+        }
+    }
+
+    private func statusMessage(title: String, detail: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "camera.fill").font(.system(size: 30, weight: .light))
+            Text(title).font(.system(size: 14, weight: .semibold))
+            Text(detail).font(.system(size: 12)).multilineTextAlignment(.center)
+        }.foregroundStyle(.white)
     }
 
     private func focusIndicator(at point: CGPoint, in size: CGSize) -> some View {
@@ -355,8 +388,8 @@ struct CameraView: View {
     }
 
     private func updateCameraActivity() {
-        if scenePhase == .active && !reviewingPhotos { camera.start() }
-        else { camera.stop() }
+        if reviewingPhotos || scenePhase == .background { camera.stop() }
+        else if scenePhase == .active { camera.start() }
     }
 }
 
