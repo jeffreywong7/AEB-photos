@@ -4,7 +4,7 @@ The target is a photo-only camera as close as possible to the native iPhone 15 P
 
 ## Current evidence
 
-At `51cb15f`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, storage checks, and fourteen of fifteen UI interactions pass. Relaunch recovery and empty-library cancellation pass. The remaining test selected a bundled simulator HEIF photo through the underlying review cell while expecting the added PNG. The exported image and info sheet show the HEIF representation and dimensions correctly. The next run selects the picker's photo/screenshot accessibility element explicitly and checks the seeded PNG's format and dimensions. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40485232175).
+At `8517dca`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, storage checks, and fourteen of fifteen UI interactions pass. Relaunch recovery and empty-library cancellation pass. The remaining test matched the photo grid's aggregate label instead of an individual asset. Its exported hierarchy shows exactly one screenshot image with the seeded PNG's label and bounds. The next run restricts the query to that image element and checks its format and dimensions. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40486964132).
 
 | Area | Implemented | Verified | Still required |
 | --- | --- | --- | --- |

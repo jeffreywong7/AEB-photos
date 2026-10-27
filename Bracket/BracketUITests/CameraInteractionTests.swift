@@ -212,7 +212,7 @@ final class CameraInteractionTests: XCTestCase {
         pickerHierarchy.name = "System photo library accessibility"
         pickerHierarchy.lifetime = .keepAlways
         add(pickerHierarchy)
-        let photo = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH 'Photo,' OR label BEGINSWITH 'Screenshot,'")).firstMatch
+        let photo = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Screenshot,'")).firstMatch
         XCTAssertTrue(photo.waitForExistence(timeout: 10))
         photo.tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: cancel)], timeout: 10), .completed)
