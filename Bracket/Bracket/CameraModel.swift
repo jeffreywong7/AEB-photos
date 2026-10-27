@@ -7,6 +7,7 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     private let output = AVCapturePhotoOutput()
     private let queue = DispatchQueue(label: "camera.session")
     private var device: AVCaptureDevice?
+    private var zoomScale: CGFloat = 1
     private var images: [Data] = []
     private var captureError: String?
 
@@ -19,8 +20,22 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
     @Published var count = 3
     @Published var spacing: Float = 1
     @Published var center: Float = 0
-    @Published var showGrid = true
+    @Published var showGrid = false
     @Published var lastCapture: String?
+    @Published var recentPhotos: [UIImage] = []
+    @Published private(set) var zoom: CGFloat = 1
+    @Published private(set) var maxZoom: CGFloat = 1
+    @Published private(set) var minZoom: CGFloat = 1
+    @Published private(set) var zoomPresets: [CGFloat] = [1]
+
+    var captureUnavailableReason: String? {
+        guard ready else { return nil }
+        if maxCount < 3 { return "AEB is unavailable on this camera. Switch cameras to take a bracket." }
+        if !offsets.allSatisfy({ $0 >= minBias && $0 <= maxBias }) {
+            return "Reduce the EV step or center exposure to fit this camera’s range."
+        }
+        return nil
+    }
 
     var offsets: [Float] {
         let half = count / 2
@@ -43,11 +58,22 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
         }
     }
 
+    func stop() {
+        queue.async {
+            if self.session.isRunning { self.session.stopRunning() }
+            DispatchQueue.main.async { self.ready = false }
+        }
+    }
+
     private func configure() {
         queue.async {
-            guard !self.session.isRunning else { return }
-            guard let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else {
-                DispatchQueue.main.async { self.message = "A rear camera is required. Try this app on an iPhone." }
+            if let camera = self.device {
+                if !self.session.isRunning { self.session.startRunning() }
+                self.publishCapabilities(for: camera)
+                return
+            }
+            guard let camera = self.preferredCamera(position: .back) else {
+                DispatchQueue.main.async { self.message = "A camera is required. Try this app on an iPhone." }
                 return
             }
             do {
@@ -63,20 +89,156 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
                 self.session.addOutput(self.output)
                 self.session.commitConfiguration()
                 self.device = camera
+                let activeCamera = self.bracketCompatibleCamera(camera)
                 self.session.startRunning()
-                if let connection = self.output.connection(with: .video), connection.isVideoOrientationSupported {
-                    connection.videoOrientation = .portrait
-                }
-                let maximum = self.output.maxBracketedCapturePhotoCount
-                DispatchQueue.main.async {
-                    self.maxCount = maximum
-                    self.minBias = camera.minExposureTargetBias
-                    self.maxBias = camera.maxExposureTargetBias
-                    self.ready = maximum >= 3
-                    if maximum < 3 { self.message = "This camera does not support a three-photo exposure bracket." }
-                }
+                self.publishCapabilities(for: activeCamera, resetZoom: true)
             } catch {
                 DispatchQueue.main.async { self.message = "Could not start the camera: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    private func preferredCamera(position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+        let types: [AVCaptureDevice.DeviceType] = position == .back
+            ? [.builtInTripleCamera, .builtInDualWideCamera, .builtInDualCamera, .builtInWideAngleCamera]
+            : [.builtInWideAngleCamera]
+        for type in types {
+            if let camera = AVCaptureDevice.default(type, for: .video, position: position) { return camera }
+        }
+        return nil
+    }
+
+    private func replaceInput(with camera: AVCaptureDevice) throws -> Bool {
+        let input = try AVCaptureDeviceInput(device: camera)
+        guard let currentInput = session.inputs.first as? AVCaptureDeviceInput else { return false }
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        session.removeInput(currentInput)
+        guard session.canAddInput(input) else {
+            session.addInput(currentInput)
+            return false
+        }
+        session.addInput(input)
+        device = camera
+        return true
+    }
+
+    private func bracketCompatibleCamera(_ camera: AVCaptureDevice) -> AVCaptureDevice {
+        guard camera.isVirtualDevice, output.maxBracketedCapturePhotoCount < 3,
+              let wide = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: camera.position)
+        else { return camera }
+        do {
+            return try replaceInput(with: wide) ? wide : camera
+        } catch {
+            DispatchQueue.main.async { self.message = "Could not select a camera for AEB: \(error.localizedDescription)" }
+            return camera
+        }
+    }
+
+    private func publishCapabilities(for camera: AVCaptureDevice, resetZoom: Bool = false) {
+        if let connection = output.connection(with: .video), connection.isVideoOrientationSupported {
+            connection.videoOrientation = .portrait
+        }
+        let maximum = output.maxBracketedCapturePhotoCount
+        let switchovers = camera.virtualDeviceSwitchOverVideoZoomFactors.map { CGFloat(truncating: $0) }
+        let includesUltraWide = camera.constituentDevices.contains { $0.deviceType == .builtInUltraWideCamera }
+        let scale: CGFloat = includesUltraWide ? 1 / (switchovers.first ?? 1) : 1
+        zoomScale = scale
+        let minimum = camera.minAvailableVideoZoomFactor * scale
+        let zoomLimit = min(camera.maxAvailableVideoZoomFactor * scale, 10)
+        let currentZoom = camera.videoZoomFactor * scale
+        let presets = Array(Set(([minimum, 1, 2] + switchovers.map { $0 * scale })
+            .filter { $0 >= minimum && $0 <= zoomLimit })).sorted()
+        DispatchQueue.main.async {
+            self.maxCount = maximum
+            self.minBias = camera.minExposureTargetBias
+            self.maxBias = camera.maxExposureTargetBias
+            self.minZoom = minimum
+            self.maxZoom = zoomLimit
+            self.zoomPresets = presets
+            self.zoom = currentZoom
+            if self.count > maximum { self.count = 3 }
+            self.ready = true
+            if resetZoom { self.setZoom(1) }
+            self.setExposure(self.center)
+        }
+    }
+
+    func switchCamera() {
+        guard ready, !busy else { return }
+        ready = false
+        queue.async {
+            guard let currentInput = self.session.inputs.first as? AVCaptureDeviceInput else {
+                DispatchQueue.main.async { self.ready = self.session.isRunning }
+                return
+            }
+            let position: AVCaptureDevice.Position = currentInput.device.position == .back ? .front : .back
+            do {
+                guard let camera = self.preferredCamera(position: position) else {
+                    DispatchQueue.main.async { self.ready = true; self.message = "This camera is unavailable." }
+                    return
+                }
+                guard try self.replaceInput(with: camera) else {
+                    self.publishCapabilities(for: currentInput.device)
+                    DispatchQueue.main.async { self.message = "Could not switch cameras." }
+                    return
+                }
+                let activeCamera = self.bracketCompatibleCamera(camera)
+                self.publishCapabilities(for: activeCamera, resetZoom: true)
+            } catch {
+                DispatchQueue.main.async { self.ready = true; self.message = "Could not switch cameras: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    func setZoom(_ value: CGFloat) {
+        guard ready, !busy else { return }
+        let target = min(max(value, minZoom), maxZoom)
+        zoom = target
+        queue.async {
+            guard let camera = self.device else { return }
+            do {
+                try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+                camera.videoZoomFactor = min(max(target / self.zoomScale, camera.minAvailableVideoZoomFactor), camera.maxAvailableVideoZoomFactor)
+            } catch {
+                let actualZoom = camera.videoZoomFactor * self.zoomScale
+                DispatchQueue.main.async { self.zoom = actualZoom }
+            }
+        }
+    }
+
+    func focus(at point: CGPoint) {
+        guard ready, !busy else { return }
+        queue.async {
+            guard let camera = self.device else { return }
+            do {
+                try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+                if camera.isFocusPointOfInterestSupported, camera.isFocusModeSupported(.autoFocus) {
+                    camera.focusPointOfInterest = point
+                    camera.focusMode = .autoFocus
+                }
+                if camera.isExposurePointOfInterestSupported, camera.isExposureModeSupported(.continuousAutoExposure) {
+                    camera.exposurePointOfInterest = point
+                    camera.exposureMode = .continuousAutoExposure
+                }
+            } catch {
+                DispatchQueue.main.async { self.message = "Could not adjust focus: \(error.localizedDescription)" }
+            }
+        }
+    }
+
+    func setExposure(_ value: Float) {
+        guard ready, !busy else { return }
+        queue.async {
+            guard let camera = self.device else { return }
+            do {
+                try camera.lockForConfiguration()
+                defer { camera.unlockForConfiguration() }
+                camera.setExposureTargetBias(min(max(value, camera.minExposureTargetBias), camera.maxExposureTargetBias))
+            } catch {
+                DispatchQueue.main.async { self.message = "Could not adjust exposure: \(error.localizedDescription)" }
             }
         }
     }
@@ -110,9 +272,13 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             return
         }
         let photos = images
-        guard !photos.isEmpty else {
-            DispatchQueue.main.async { self.busy = false; self.message = "No photos were captured." }
+        images.removeAll()
+        guard !photos.isEmpty, photos.count == resolvedSettings.expectedPhotoCount else {
+            DispatchQueue.main.async { self.busy = false; self.message = "The exposure bracket was incomplete. Please try again." }
             return
+        }
+        let previews = photos.compactMap { data in
+            UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 1600, height: 1600))
         }
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
@@ -127,7 +293,10 @@ final class CameraModel: NSObject, ObservableObject, AVCapturePhotoCaptureDelega
             } completionHandler: { success, error in
                 DispatchQueue.main.async {
                     self.busy = false
-                    if success { self.lastCapture = "Saved \(photos.count) exposures to Photos" }
+                    if success {
+                        self.recentPhotos = previews
+                        self.lastCapture = "Saved \(photos.count) exposures"
+                    }
                     else { self.message = "Could not save photos: \(error?.localizedDescription ?? "Unknown error")" }
                 }
             }
