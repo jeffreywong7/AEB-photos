@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 func near(_ actual: CGFloat, _ expected: CGFloat, _ description: String) {
     precondition(abs(actual - expected) <= 0.5, "\(description): expected \(expected), got \(actual)")
