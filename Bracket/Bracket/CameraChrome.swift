@@ -1,6 +1,16 @@
 import SwiftUI
+import AVKit
 
 extension View {
+    @ViewBuilder
+    func cameraHardwareShutter(enabled: Bool, action: @escaping () -> Void) -> some View {
+        if #available(iOS 18, *) {
+            onCameraCaptureEvent(isEnabled: enabled) { event in
+                if event.phase == .ended { action() }
+            }
+        } else { self }
+    }
+
     @ViewBuilder
     func cameraGlass<S: Shape>(in shape: S) -> some View {
         #if compiler(>=6.2)

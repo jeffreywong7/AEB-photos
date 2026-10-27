@@ -10,6 +10,8 @@ The visual reference is the user's iPhone 15 Pro screenshots, supplied at 923×2
 - The newer camera layout and translucent controls are part of Apple's Liquid Glass redesign. [Apple's design announcement](https://www.apple.com/newsroom/2025/06/apple-introduces-a-delightful-and-elegant-new-software-design/).
 - Apple's bracket-capture API does not support flash or Live Photos. Single photos can use flash; AEB must keep it off. [Bracket capture settings](https://developer.apple.com/documentation/avfoundation/avcapturephotobracketsettings).
 
+Apple's capture-controls session describes handling physical-button releases through `onCameraCaptureEvent`, and disabling it when capture cannot be handled. The app routes that event through the same shutter action, including timer cancellation. [Capture controls](https://developer.apple.com/videos/play/wwdc2025/253/).
+
 ## Measured layout
 
 These are measurements from the supplied screenshots, not dimensions published by Apple. At 393×852 points, the 4:3 frame starts at y=118 and ends at y=642. The toolbar center is near y=82, the shutter near y=698, and the thumbnail/PHOTO/camera-switch row near y=794. The selected main-camera zoom stop is centered horizontally. `tests/CameraLayout/main.swift` checks these anchors and checks that compact iPhone layouts keep the controls separate from the captured frame.

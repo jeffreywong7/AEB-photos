@@ -27,11 +27,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build for iOS Simulator
         run: scripts/verify-ios.sh
-      - name: Capture camera UI on iPhone 15 Pro Simulator
-        run: scripts/capture-camera-ui.sh
+      - name: Exercise camera controls and capture iPhone 15 Pro UI
+        run: scripts/verify-camera-ui.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: camera-ui-preview
           path: .build/camera-ui/*.png
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: camera-ui-test-results
+          path: .build/camera-ui-tests.xcresult
           if-no-files-found: warn

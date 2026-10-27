@@ -41,6 +41,8 @@ struct ZoomWheel: View {
                     }
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier("camera.zoomWheel")
             .accessibilityLabel("Zoom wheel")
             .accessibilityAction(named: "Close zoom wheel", onClose)
             .accessibilityValue("\(label(zoom)) times")

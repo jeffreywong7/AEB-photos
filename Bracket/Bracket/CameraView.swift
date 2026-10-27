@@ -67,6 +67,7 @@ struct CameraView: View {
             #endif
         }
         .cameraSnapshotPreview()
+        .cameraHardwareShutter(enabled: scenePhase == .active && !reviewingPhotos && (camera.canCapture || countdown != nil), action: pressShutter)
         .task(id: camera.lastCapture) {
             guard camera.lastCapture != nil else { return }
             try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -105,6 +106,7 @@ struct CameraView: View {
                 .foregroundStyle(camera.center == 0 ? .white : cameraYellow)
                 .frame(width: 44, height: 44)
             }
+            .accessibilityIdentifier("camera.exposure")
             .accessibilityLabel("Exposure adjustment")
             .accessibilityValue("\(ev(camera.center)) EV")
         }
@@ -142,14 +144,16 @@ struct CameraView: View {
         .accessibilityValue(camera.aebEnabled ? "Off during AEB" : camera.flashMode == .auto ? "Auto" : camera.flashMode == .on ? "On" : "Off")
     }
 
+    private func cameraTapped(at point: CGPoint, devicePoint: CGPoint) {
+        guard camera.ready, !camera.busy, countdown == nil else { return }
+        if selectedPanel != nil { selectedPanel = nil; return }
+        if showingZoomWheel { showingZoomWheel = false; return }
+        camera.focus(at: devicePoint)
+        displayFocus(at: point)
+    }
+
     private var cameraPreview: some View {
-        CameraPreview(session: camera.session) { point, devicePoint in
-            guard camera.ready, !camera.busy, countdown == nil else { return }
-            if selectedPanel != nil { selectedPanel = nil; return }
-            if showingZoomWheel { showingZoomWheel = false; return }
-            camera.focus(at: devicePoint)
-            displayFocus(at: point)
-        }
+        CameraPreview(session: camera.session, onFocus: cameraTapped)
     }
 
     private var viewfinder: some View {
@@ -157,7 +161,12 @@ struct CameraView: View {
             ZStack {
                 Group {
                     #if DEBUG
-                    if camera.isInterfacePreview { CameraPreviewScene() }
+                    if camera.isInterfacePreview {
+                        CameraPreviewScene().gesture(SpatialTapGesture().onEnded { value in
+                            let point = value.location
+                            cameraTapped(at: point, devicePoint: CGPoint(x: point.x / geometry.size.width, y: point.y / geometry.size.height))
+                        })
+                    }
                     else { cameraPreview }
                     #else
                     cameraPreview
@@ -367,6 +376,7 @@ struct CameraView: View {
                 }
                 .simultaneousGesture(LongPressGesture(minimumDuration: 0.35).onEnded { _ in showingZoomWheel = true })
                 .accessibilityLabel(value == 1 && camera.rearCamera ? "Main camera. Tap to cycle 24, 28, and 35 millimeters" : "\(zoomLabel(value)) times zoom")
+                .accessibilityIdentifier("camera.zoom.\(zoomLabel(value))")
                 .accessibilityHint("Touch and hold to open the zoom wheel")
                 .accessibilityAddTraits(isSelectedZoom(value) ? .isSelected : [])
                 .disabled(!camera.ready || camera.busy)
@@ -533,6 +543,7 @@ struct CameraView: View {
                 .frame(width: 48, height: 48)
                 .cameraGlass(in: Circle())
             }
+            .accessibilityIdentifier("camera.controls")
             .accessibilityLabel(selectedPanel == nil ? "Show camera controls" : "Hide camera controls")
             .disabled(camera.busy || countdown != nil)
         }
