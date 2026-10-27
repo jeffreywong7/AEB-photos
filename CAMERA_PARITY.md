@@ -4,7 +4,7 @@ The target is a photo-only camera as close as possible to the native iPhone 15 P
 
 ## Current evidence
 
-At `8517dca`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, storage checks, and fourteen of fifteen UI interactions pass. Relaunch recovery and empty-library cancellation pass. The remaining test matched the photo grid's aggregate label instead of an individual asset. Its exported hierarchy shows exactly one screenshot image with the seeded PNG's label and bounds. The next run restricts the query to that image element and checks its format and dimensions. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40486964132).
+At `b09ce46`, native Debug and Release builds, layout/level checks, ImageIO crop/orientation/ISO checks, storage checks, and fourteen of fifteen UI interactions pass. Relaunch recovery and empty-library cancellation pass. The remaining picker test identifies the correct screenshot image, but XCTest cannot resolve a hit point for it. The exported hierarchy and screenshot show the image visible at its reported bounds. The next run taps the center of those bounds and retains the PNG format/dimension assertions. [CI run](https://github.com/jeffreywong7/real-estate-photos/actions/runs/40488182094).
 
 | Area | Implemented | Verified | Still required |
 | --- | --- | --- | --- |

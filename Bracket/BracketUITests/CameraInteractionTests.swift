@@ -214,7 +214,10 @@ final class CameraInteractionTests: XCTestCase {
         add(pickerHierarchy)
         let photo = app.images.matching(NSPredicate(format: "label BEGINSWITH 'Screenshot,'")).firstMatch
         XCTAssertTrue(photo.waitForExistence(timeout: 10))
-        photo.tap()
+        XCTAssertFalse(photo.frame.isEmpty)
+        XCTAssertTrue(app.frame.contains(photo.frame))
+        // The system grid reports image bounds but no XCTest hit point.
+        photo.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: cancel)], timeout: 10), .completed)
         app.buttons["Photo information"].tap()
         XCTAssertTrue(app.staticTexts["Format, PNG"].waitForExistence(timeout: 5))
