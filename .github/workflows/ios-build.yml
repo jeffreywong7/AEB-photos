@@ -1,0 +1,49 @@
+name: iOS build
+
+on:
+  pull_request:
+    paths:
+      - 'Bracket/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/ios-build.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'Bracket/**'
+      - 'scripts/**'
+      - 'tests/**'
+      - '.github/workflows/ios-build.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build for iOS Simulator
+        run: scripts/verify-ios.sh
+      - name: Exercise camera controls and capture iPhone 15 Pro UI
+        run: scripts/verify-camera-ui.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: camera-ui-preview
+          path: .build/camera-ui/*.png
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: camera-ui-test-results
+          path: .build/camera-ui-tests.xcresult
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: camera-ui-test-attachments
+          path: .build/camera-ui-attachments
+          if-no-files-found: warn
